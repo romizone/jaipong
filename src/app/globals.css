@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme {
+  /* Gelap dan hangat — emas batik di atas malam. */
+  --color-night: #0b0810;
+  --color-night-2: #120d1a;
+  --color-ink: #f6f0e8;
+  --color-muted: #a3998f;
+  --color-faint: #6d6560;
+  --color-gold: #e9a63c;
+  --color-gold-soft: #f5c777;
+  --color-rose: #dc4f7d;
+  --color-jade: #4cc0a0;
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-surface: rgba(255, 255, 255, 0.035);
+  --color-surface-2: rgba(255, 255, 255, 0.06);
+
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-xl2: 1.25rem;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-night);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* Sorot lembut di belakang halaman supaya latar tidak terasa datar. */
+  background-image:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(233, 166, 60, 0.13), transparent 60%),
+    radial-gradient(50rem 36rem at 92% 4%, rgba(220, 79, 125, 0.11), transparent 62%);
+  background-attachment: fixed;
+}
+
+/* Batang geser yang tipis, supaya panel panjang tidak terasa berat. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@utility panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  backdrop-filter: blur(14px);
+}
+
+@utility ring-focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="slider"]:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+/* Denyut halus saat lagu sedang disusun. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.97);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-breathe {
+  animation: breathe 1.9s ease-in-out infinite;
+}
+
+.animate-rise {
+  animation: rise 0.34s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-breathe,
+  .animate-rise {
+    animation: none;
+  }
+}

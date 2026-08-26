@@ -1,0 +1,282 @@
+"use client";
+
+import { useState } from "react";
+import { Loader2, Music4, Sparkles, Wand2 } from "lucide-react";
+import type { ComposeRequest, VocalType } from "@/lib/types";
+
+const PRESETS: Array<{ label: string; tags: string }> = [
+  { label: "Pop Indonesia", tags: "pop indonesia, manis, gitar akustik" },
+  { label: "Dangdut Koplo", tags: "dangdut koplo, kendang, suling, gembira" },
+  { label: "Jaipong Sunda", tags: "jaipong, kendang sunda, suling, laras pelog" },
+  { label: "Keroncong", tags: "keroncong, ukulele, cello, syahdu" },
+  { label: "Gamelan Ambient", tags: "gamelan, slendro, tenang, meditatif" },
+  { label: "Balada Galau", tags: "balada, piano, sendu, patah hati" },
+  { label: "Rock Anthem", tags: "rock, gitar distorsi, drum keras, semangat" },
+  { label: "Lo-fi Santai", tags: "lo-fi, chill, piano elektrik, hujan" },
+  { label: "EDM Festival", tags: "edm, sintesizer, drop, energik" },
+  { label: "Reggae Pantai", tags: "reggae, santai, offbeat, pantai" },
+  { label: "Jazz Kafe", tags: "jazz, akor tujuh, piano elektrik, hangat" },
+  { label: "Sinematik", tags: "sinematik, orkestra, megah, string" },
+];
+
+const DURATIONS = [
+  { value: 45, label: "45 dtk" },
+  { value: 90, label: "1.5 mnt" },
+  { value: 150, label: "2.5 mnt" },
+  { value: 210, label: "3.5 mnt" },
+];
+
+type Props = {
+  busy: boolean;
+  onSubmit: (request: ComposeRequest) => void;
+  onCancel: () => void;
+};
+
+export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
+  const [prompt, setPrompt] = useState("");
+  const [custom, setCustom] = useState(false);
+  const [title, setTitle] = useState("");
+  const [lyrics, setLyrics] = useState("");
+  const [styleTags, setStyleTags] = useState("");
+  const [instrumental, setInstrumental] = useState(false);
+  const [vocal, setVocal] = useState<VocalType>("female");
+  const [duration, setDuration] = useState(90);
+
+  const canSubmit =
+    !busy && (prompt.trim().length > 0 || lyrics.trim().length > 0 || styleTags.trim().length > 0);
+
+  /** Pecah isian gaya menjadi kata kunci satuan. */
+  function parseTags(raw: string): string[] {
+    return raw
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+
+  // Cocokkan per kata kunci utuh — kalau memakai pencocokan potongan teks,
+  // "kendang sunda" akan ikut menyalakan preset yang hanya minta "kendang".
+  const selected = parseTags(styleTags);
+
+  function togglePreset(tags: string) {
+    setStyleTags((current) => {
+      const parts = parseTags(current);
+      const incoming = parseTags(tags);
+      const has = incoming.every((t) => parts.includes(t));
+      const next = has
+        ? parts.filter((t) => !incoming.includes(t))
+        : [...parts, ...incoming.filter((t) => !parts.includes(t))];
+      return next.join(", ");
+    });
+  }
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      prompt: prompt.trim(),
+      custom,
+      title: custom ? title.trim() : undefined,
+      lyrics: custom ? lyrics.trim() : undefined,
+      styleTags: styleTags.trim(),
+      instrumental,
+      vocal: instrumental ? "none" : vocal,
+      duration,
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="panel rounded-xl2 p-5 sm:p-6">
+      <div className="flex items-center gap-2 text-sm font-semibold text-gold">
+        <Sparkles size={16} aria-hidden />
+        Bikin lagu
+      </div>
+
+      <label htmlFor="prompt" className="mt-4 block text-sm font-medium text-ink">
+        Lagu seperti apa yang kamu bayangkan?
+      </label>
+      <textarea
+        id="prompt"
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={4}
+        maxLength={2000}
+        placeholder="Lagu dangdut riang tentang pulang kampung naik kereta malam, ada suling dan kendang."
+        className="mt-2 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-3 text-[15px] leading-relaxed text-ink placeholder:text-faint"
+      />
+
+      <fieldset className="mt-5">
+        <legend className="text-sm font-medium text-ink">Gaya musik</legend>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {PRESETS.map((preset) => {
+            const active = parseTags(preset.tags).every((t) => selected.includes(t));
+            return (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => togglePreset(preset.tags)}
+                aria-pressed={active}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                  active
+                    ? "border-gold/70 bg-gold/15 text-gold-soft"
+                    : "border-line bg-surface text-muted hover:border-white/20 hover:text-ink"
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <div>
+          <span className="block text-sm font-medium text-ink">Durasi</span>
+          <div className="mt-2 grid grid-cols-4 gap-1 rounded-xl border border-line bg-night-2/70 p-1">
+            {DURATIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setDuration(option.value)}
+                aria-pressed={duration === option.value}
+                className={`rounded-lg px-2 py-2 text-xs font-medium transition ${
+                  duration === option.value
+                    ? "bg-gold text-night"
+                    : "text-muted hover:text-ink"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <span className="block text-sm font-medium text-ink">Vokal</span>
+          <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-line bg-night-2/70 p-1">
+            {(
+              [
+                ["female", "Wanita"],
+                ["male", "Pria"],
+                ["none", "Instrumen"],
+              ] as const
+            ).map(([value, label]) => {
+              const active = value === "none" ? instrumental : !instrumental && vocal === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    if (value === "none") {
+                      setInstrumental(true);
+                    } else {
+                      setInstrumental(false);
+                      setVocal(value);
+                    }
+                  }}
+                  aria-pressed={active}
+                  className={`rounded-lg px-2 py-2 text-xs font-medium transition ${
+                    active ? "bg-gold text-night" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setCustom((v) => !v)}
+        aria-expanded={custom}
+        className="mt-5 flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-muted transition hover:text-ink"
+      >
+        <span className="flex items-center gap-2">
+          <Wand2 size={15} aria-hidden />
+          Mode kustom — tulis judul, gaya, dan lirik sendiri
+        </span>
+        <span className="text-xs text-faint">{custom ? "Tutup" : "Buka"}</span>
+      </button>
+
+      {custom && (
+        <div className="animate-rise mt-3 space-y-3">
+          <div>
+            <label htmlFor="title" className="block text-xs font-medium text-muted">
+              Judul
+            </label>
+            <input
+              id="title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={90}
+              placeholder="Senja di Ciwidey"
+              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint"
+            />
+          </div>
+          <div>
+            <label htmlFor="tags" className="block text-xs font-medium text-muted">
+              Gaya musik (pisahkan dengan koma)
+            </label>
+            <input
+              id="tags"
+              value={styleTags}
+              onChange={(e) => setStyleTags(e.target.value)}
+              maxLength={300}
+              placeholder="jaipong, kendang, suling, riang"
+              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint"
+            />
+          </div>
+          <div>
+            <label htmlFor="lyrics" className="block text-xs font-medium text-muted">
+              Lirik — kosongkan kalau mau ditulis AI
+            </label>
+            <textarea
+              id="lyrics"
+              value={lyrics}
+              onChange={(e) => setLyrics(e.target.value)}
+              rows={7}
+              maxLength={6000}
+              placeholder={"[Verse]\nSenja turun di Ciwidey\nKabut tipis di jendela\n\n[Reff]\nPulanglah, pulanglah"}
+              className="mt-1.5 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 font-mono text-[13px] leading-relaxed text-ink placeholder:text-faint"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 flex gap-2">
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gold to-rose px-4 py-3 text-sm font-semibold text-night transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {busy ? (
+            <>
+              <Loader2 size={16} className="animate-spin" aria-hidden />
+              Menyusun…
+            </>
+          ) : (
+            <>
+              <Music4 size={16} aria-hidden />
+              Buat Lagu
+            </>
+          )}
+        </button>
+        {busy && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border border-line px-4 py-3 text-sm font-medium text-muted transition hover:text-ink"
+          >
+            Batal
+          </button>
+        )}
+      </div>
+
+      <p className="mt-3 text-[11px] leading-relaxed text-faint">
+        Lirik dan melodi ditulis AI, lalu dibunyikan langsung di browser kamu.
+        Tulis lagu orisinal — jangan menempelkan lirik milik orang lain.
+      </p>
+    </form>
+  );
+}
