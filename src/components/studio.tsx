@@ -20,8 +20,13 @@ import {
   warmSpeechVoices,
   type PlayerState,
 } from "@/lib/audio/engine";
-import { buildTimeline } from "@/lib/audio/timeline";
+import {
+  buildTimeline,
+  type LineMark,
+  type SectionMark,
+} from "@/lib/audio/timeline";
 import { audioBufferToWav, safeFilename } from "@/lib/audio/wav";
+import { getAudio, putAudio } from "@/lib/client/audiodb";
 import { readComposeStream } from "@/lib/client/stream";
 import {
   deleteSong,
@@ -30,14 +35,28 @@ import {
   saveSong,
   subscribeLibrary,
 } from "@/lib/client/storage";
-import type { ComposeRequest, Song } from "@/lib/types";
+import { TrackPlayer } from "@/lib/client/track-player";
+import {
+  isTrack,
+  type ComposeRequest,
+  type LibraryItem,
+  type SongPlan,
+  type Track,
+} from "@/lib/types";
 
 type Draft = { title: string; lines: string[] };
+
+async function httpError(res: Response): Promise<Error> {
+  const detail = (await res.json().catch(() => null)) as
+    | { error?: string }
+    | null;
+  return new Error(detail?.error ?? "Lagu gagal disusun. Coba lagi.");
+}
 
 export function Studio() {
   // Pustaka hidup di localStorage; React yang menjaga cuplikannya tetap sinkron.
   const library = useSyncExternalStore(subscribeLibrary, getLibrary, getServerLibrary);
-  const [current, setCurrent] = useState<Song | null>(null);
+  const [current, setCurrent] = useState<LibraryItem | null>(null);
 
   const [composing, setComposing] = useState(false);
   const [status, setStatus] = useState("");
@@ -48,92 +67,168 @@ export function Studio() {
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(0.9);
   const [singing, setSinging] = useState(true);
-  /** Id lagu yang sedang dirender jadi WAV — satu ekspor pada satu waktu. */
+  /** Id lagu yang sedang disiapkan berkas unduhannya. */
   const [exportingId, setExportingId] = useState<string | null>(null);
 
-  const playerRef = useRef<SongPlayer | null>(null);
+  /**
+   * Dua pemutar hidup berdampingan: TrackPlayer untuk lagu bermodel musik
+   * (audio jadi), SongPlayer untuk lagu partitur dari versi sebelumnya.
+   * Keduanya melapor ke state yang sama; hanya satu yang berbunyi.
+   */
+  const synthRef = useRef<SongPlayer | null>(null);
+  const trackRef = useRef<TrackPlayer | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** Blob lagu aktif — cadangan kalau IndexedDB tidak bisa dipakai. */
+  const blobRef = useRef<{ id: string; blob: Blob } | null>(null);
 
   /* ------------------------------------------------------------ setup --- */
 
   useEffect(() => {
-    const player = new SongPlayer({
-      onPosition: setPosition,
-      onState: setPlayerState,
-    });
-    playerRef.current = player;
+    const callbacks = { onPosition: setPosition, onState: setPlayerState };
+    const synth = new SongPlayer(callbacks);
+    const track = new TrackPlayer(callbacks);
+    synthRef.current = synth;
+    trackRef.current = track;
     warmSpeechVoices();
 
     return () => {
-      player.dispose();
-      playerRef.current = null;
+      synth.dispose();
+      track.dispose();
+      synthRef.current = null;
+      trackRef.current = null;
     };
   }, []);
 
-  const timeline = useMemo(() => (current ? buildTimeline(current) : null), [current]);
+  /** Penanda lirik + durasi untuk panel dan bilah pemutar. */
+  const view = useMemo(() => {
+    if (!current) return null;
+    if (isTrack(current)) {
+      return { sections: trackSections(current), duration: current.durationSec };
+    }
+    const timeline = buildTimeline(current);
+    return { sections: timeline.sections, duration: timeline.duration };
+  }, [current]);
 
   /* ---------------------------------------------------------- menyusun --- */
 
-  const compose = useCallback(async (request: ComposeRequest) => {
-    // Konteks audio dibuka di sini, selagi klik pengguna masih berlaku.
-    playerRef.current?.unlock();
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setComposing(true);
-    setError(null);
-    setDraft({ title: "", lines: [] });
-    setStatus("Menyiapkan ide lagu…");
-
-    try {
-      const response = await fetch("/api/compose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const detail = (await response.json().catch(() => null)) as
-          | { error?: string }
-          | null;
-        throw new Error(detail?.error ?? "Lagu gagal disusun. Coba lagi.");
+  /** Pasang trek yang baru jadi: simpan, muat ke pemutar, langsung putar. */
+  const adoptTrack = useCallback(
+    async (incoming: Track, blob: Blob) => {
+      blobRef.current = { id: incoming.id, blob };
+      const stored = await putAudio(incoming.id, blob);
+      if (!stored) {
+        // Tanpa IndexedDB lagunya tetap berbunyi sekarang, hanya tidak bisa
+        // diputar lagi setelah halaman ditutup.
+        console.warn("[jaipong] IndexedDB tidak tersedia; audio hanya untuk sesi ini");
       }
 
-      for await (const event of readComposeStream(response, controller.signal)) {
-        if (event.type === "status") setStatus(event.message);
-        else if (event.type === "title") setDraft((d) => ({ ...d, title: event.title }));
-        else if (event.type === "lyric")
-          setDraft((d) => ({ ...d, lines: [...d.lines, event.line].slice(-14) }));
-        else if (event.type === "error") setError(event.message);
-        else if (event.type === "song") {
-          saveSong(event.song);
-          setCurrent(event.song);
-          const player = playerRef.current;
-          if (player) {
-            player.load(event.song);
-            player.setVolume(volume);
-            player.setSinging(singing);
-            void player.play(0);
+      let track = incoming;
+      const player = trackRef.current;
+      if (player) {
+        synthRef.current?.stop();
+        setStatus("Menyiapkan pemutar…");
+        await player.load(blob);
+        if (player.duration > 0) {
+          track = { ...incoming, durationSec: player.duration };
+        }
+        player.setVolume(volume);
+      }
+
+      saveSong(track);
+      setCurrent(track);
+      setPosition(0);
+      if (player) void player.play(0);
+    },
+    [volume],
+  );
+
+  const compose = useCallback(
+    async (request: ComposeRequest) => {
+      // Kedua konteks audio dibuka di sini, selagi klik pengguna masih berlaku.
+      synthRef.current?.unlock();
+      trackRef.current?.unlock();
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setComposing(true);
+      setError(null);
+      setDraft({ title: "", lines: [] });
+      setStatus("Menulis judul dan lirik…");
+
+      try {
+        /* Tahap 1: model bahasa menulis judul, gaya, dan lirik. */
+        const planRes = await fetch("/api/compose", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+          signal: controller.signal,
+        });
+        if (!planRes.ok) throw await httpError(planRes);
+
+        let plan: SongPlan | null = null;
+        for await (const event of readComposeStream(planRes, controller.signal)) {
+          if (event.type === "status") setStatus(event.message);
+          else if (event.type === "title")
+            setDraft((d) => ({ ...d, title: event.title }));
+          else if (event.type === "lyric")
+            setDraft((d) => ({ ...d, lines: [...d.lines, event.line].slice(-14) }));
+          else if (event.type === "plan") plan = event.plan;
+          else if (event.type === "error") setError(event.message);
+        }
+        if (!plan || controller.signal.aborted) return;
+
+        /* Tahap 2: model musik membangkitkan audionya. */
+        setStatus("Membangkitkan audionya… biasanya sekitar satu menit.");
+        const renderRes = await fetch("/api/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plan,
+            duration: request.duration,
+            instrumental: request.instrumental,
+          }),
+          signal: controller.signal,
+        });
+        if (!renderRes.ok) throw await httpError(renderRes);
+
+        // Uint8Array<ArrayBuffer> eksplisit supaya diterima BlobPart.
+        const parts: Uint8Array<ArrayBuffer>[] = [];
+        let mime = "audio/mpeg";
+        let received = 0;
+
+        for await (const event of readComposeStream(renderRes, controller.signal)) {
+          if (event.type === "status") setStatus(event.message);
+          else if (event.type === "audio-begin") mime = event.mime;
+          else if (event.type === "audio") {
+            const binary = atob(event.b64);
+            const chunk = new Uint8Array(new ArrayBuffer(binary.length));
+            for (let i = 0; i < binary.length; i += 1) chunk[i] = binary.charCodeAt(i);
+            parts.push(chunk);
+            received += chunk.length;
+            setStatus(`Menerima audio… ${(received / 1_048_576).toFixed(1)} MB`);
+          } else if (event.type === "error") setError(event.message);
+          else if (event.type === "track") {
+            await adoptTrack(event.track, new Blob(parts, { type: mime }));
           }
         }
+      } catch (caught) {
+        if (!controller.signal.aborted) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Lagu gagal disusun. Coba lagi sebentar lagi.",
+          );
+        }
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null;
+        setComposing(false);
+        setStatus("");
       }
-    } catch (caught) {
-      if (!controller.signal.aborted) {
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Lagu gagal disusun. Coba lagi sebentar lagi.",
-        );
-      }
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      setComposing(false);
-      setStatus("");
-    }
-  }, [singing, volume]);
+    },
+    [adoptTrack],
+  );
 
   const cancelCompose = useCallback(() => {
     abortRef.current?.abort();
@@ -145,55 +240,93 @@ export function Studio() {
   /* ----------------------------------------------------------- pemutar --- */
 
   const playSong = useCallback(
-    (song: Song) => {
-      const player = playerRef.current;
-      if (!player) return;
+    async (item: LibraryItem) => {
+      const synth = synthRef.current;
+      const track = trackRef.current;
+      if (!synth || !track) return;
 
-      if (current?.id === song.id) {
+      if (current?.id === item.id) {
+        const player = isTrack(item) ? track : synth;
         if (player.currentState === "playing") player.pause();
         else void player.play();
         return;
       }
 
-      setCurrent(song);
-      setPosition(0);
-      player.load(song);
-      player.setVolume(volume);
-      player.setSinging(singing);
-      void player.play(0);
+      setError(null);
+      if (isTrack(item)) {
+        synth.stop();
+        track.unlock();
+        const cached = blobRef.current?.id === item.id ? blobRef.current.blob : null;
+        const blob = cached ?? (await getAudio(item.id));
+        if (!blob) {
+          setError(
+            "Audio lagu ini tidak lagi tersimpan di browser ini. Buat ulang lagunya untuk mendengarnya lagi.",
+          );
+          return;
+        }
+        blobRef.current = { id: item.id, blob };
+
+        let fixed = item;
+        await track.load(blob);
+        if (track.duration > 0 && Math.abs(track.duration - item.durationSec) > 0.5) {
+          fixed = { ...item, durationSec: track.duration };
+          saveSong(fixed);
+        }
+        setCurrent(fixed);
+        setPosition(0);
+        track.setVolume(volume);
+        void track.play(0);
+      } else {
+        track.stop();
+        setCurrent(item);
+        setPosition(0);
+        synth.load(item);
+        synth.setVolume(volume);
+        synth.setSinging(singing);
+        void synth.play(0);
+      }
     },
     [current, singing, volume],
   );
 
   const toggle = useCallback(() => {
-    const player = playerRef.current;
-    if (!player || !current) return;
+    if (!current) return;
+    const player = isTrack(current) ? trackRef.current : synthRef.current;
+    if (!player) return;
     if (player.currentState === "playing") player.pause();
     else void player.play();
   }, [current]);
 
-  const seek = useCallback((seconds: number) => {
-    playerRef.current?.seek(seconds);
-    setPosition(seconds);
-  }, []);
+  const seek = useCallback(
+    (seconds: number) => {
+      if (!current) return;
+      const player = isTrack(current) ? trackRef.current : synthRef.current;
+      player?.seek(seconds);
+      setPosition(seconds);
+    },
+    [current],
+  );
 
   const changeVolume = useCallback((value: number) => {
     setVolume(value);
-    playerRef.current?.setVolume(value);
+    synthRef.current?.setVolume(value);
+    trackRef.current?.setVolume(value);
   }, []);
 
   const toggleSinging = useCallback(() => {
     setSinging((on) => {
-      playerRef.current?.setSinging(!on);
+      synthRef.current?.setSinging(!on);
       return !on;
     });
   }, []);
 
   const remove = useCallback(
-    (song: Song) => {
-      deleteSong(song.id);
-      if (current?.id === song.id) {
-        playerRef.current?.stop();
+    (item: LibraryItem) => {
+      deleteSong(item.id);
+      if (blobRef.current?.id === item.id) blobRef.current = null;
+      if (current?.id === item.id) {
+        synthRef.current?.stop();
+        trackRef.current?.stop();
         setCurrent(null);
         setPosition(0);
       }
@@ -203,22 +336,31 @@ export function Studio() {
 
   /* ------------------------------------------------------------ unduh --- */
 
-  /**
-   * Render satu lagu jadi WAV lalu serahkan ke browser. Lagunya diterima
-   * sebagai argumen, bukan diambil dari "current", supaya kartu di pustaka
-   * bisa mengunduh tanpa harus memutarnya lebih dulu.
-   */
   const download = useCallback(
-    async (song: Song) => {
+    async (item: LibraryItem) => {
       if (exportingId) return;
-      setExportingId(song.id);
+      setExportingId(item.id);
       try {
-        const buffer = await renderSong(song);
-        const blob = audioBufferToWav(buffer);
+        let blob: Blob;
+        let extension: string;
+        if (isTrack(item)) {
+          const cached = blobRef.current?.id === item.id ? blobRef.current.blob : null;
+          const stored = cached ?? (await getAudio(item.id));
+          if (!stored) {
+            throw new Error("Audio lagu ini tidak lagi tersimpan di browser ini.");
+          }
+          blob = stored;
+          extension = item.audioFormat;
+        } else {
+          // Lagu partitur lama dirender dulu jadi WAV oleh mesin synth.
+          blob = audioBufferToWav(await renderSong(item));
+          extension = "wav";
+        }
+
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `${safeFilename(song.title)}.wav`;
+        link.download = `${safeFilename(item.title)}.${extension}`;
         document.body.appendChild(link);
         link.click();
 
@@ -229,7 +371,11 @@ export function Studio() {
         setTimeout(() => URL.revokeObjectURL(url), 30_000);
       } catch (caught) {
         console.error(caught);
-        setError("Gagal menyiapkan berkas WAV. Coba lagi.");
+        setError(
+          caught instanceof Error && caught.message.includes("tersimpan")
+            ? caught.message
+            : "Gagal menyiapkan berkas audio. Coba lagi.",
+        );
       } finally {
         setExportingId(null);
       }
@@ -237,7 +383,10 @@ export function Studio() {
     [exportingId],
   );
 
-  const getAnalyser = useCallback(() => playerRef.current?.frequencyData ?? null, []);
+  const getAnalyser = useCallback(() => {
+    if (current && isTrack(current)) return trackRef.current?.frequencyData ?? null;
+    return synthRef.current?.frequencyData ?? null;
+  }, [current]);
 
   /* ------------------------------------------------------------ tampil --- */
 
@@ -267,9 +416,9 @@ export function Studio() {
             </div>
           </div>
           <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-muted">
-            Tulis satu kalimat, dapatkan lagu utuh — lirik, melodi, akor, dan
-            aransemennya sekaligus. Lagunya dibunyikan langsung di browser kamu,
-            dan bisa diunduh sebagai berkas WAV.
+            Tulis satu kalimat, dapatkan lagu utuh — lirik ditulis AI, lalu
+            audionya dibangkitkan model musik. Lagunya bisa langsung diputar
+            dan diunduh sebagai berkas MP3.
           </p>
         </header>
 
@@ -298,7 +447,7 @@ export function Studio() {
               </div>
             )}
 
-            {current && timeline && (
+            {current && view && (
               <section className="animate-rise">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-bold tracking-tight text-ink">
@@ -307,12 +456,14 @@ export function Studio() {
                   <span className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">
                     {current.genreLabel}
                   </span>
-                  <span className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">
-                    {current.key} {modeLabel(current.mode)} · {current.bpm} BPM
-                  </span>
+                  {!isTrack(current) && (
+                    <span className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">
+                      {current.key} {modeLabel(current.mode)} · {current.bpm} BPM
+                    </span>
+                  )}
                 </div>
                 <LyricsPanel
-                  sections={timeline.sections}
+                  sections={view.sections}
                   position={position}
                   playing={playerState === "playing"}
                   onSeek={seek}
@@ -339,16 +490,16 @@ export function Studio() {
                 </div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {library.map((song) => (
+                  {library.map((item) => (
                     <SongCard
-                      key={song.id}
-                      song={song}
-                      active={current?.id === song.id}
-                      playing={current?.id === song.id && playerState === "playing"}
-                      exporting={exportingId === song.id}
-                      onPlay={() => playSong(song)}
-                      onDownload={() => void download(song)}
-                      onDelete={() => remove(song)}
+                      key={item.id}
+                      song={item}
+                      active={current?.id === item.id}
+                      playing={current?.id === item.id && playerState === "playing"}
+                      exporting={exportingId === item.id}
+                      onPlay={() => void playSong(item)}
+                      onDownload={() => void download(item)}
+                      onDelete={() => remove(item)}
                     />
                   ))}
                 </div>
@@ -359,11 +510,11 @@ export function Studio() {
               <p>
                 Lagu disimpan di browser ini saja — tidak ada akun dan tidak ada
                 salinan di server. Membersihkan data situs berarti menghapus
-                pustakanya.
+                pustakanya beserta audionya.
               </p>
               <p className="mt-1.5">
-                Suara dibangkitkan Web Audio API, bukan rekaman manusia. Kualitasnya
-                terdengar seperti sintesis, bukan studio.
+                Audio dibangkitkan model musik lewat OpenRouter. Lagu dari versi
+                sebelumnya tetap bisa diputar dengan mesin synth lama.
               </p>
             </footer>
           </div>
@@ -374,10 +525,10 @@ export function Studio() {
         song={current}
         state={playerState}
         position={position}
-        duration={timeline?.duration ?? 0}
+        duration={view?.duration ?? 0}
         volume={volume}
         singing={singing}
-        exporting={exportingId === current?.id}
+        exporting={current ? exportingId === current.id : false}
         getAnalyser={getAnalyser}
         onToggle={toggle}
         onRestart={() => seek(0)}
@@ -430,4 +581,81 @@ function ComposingCard({ status, draft }: { status: string; draft: Draft }) {
       )}
     </div>
   );
+}
+
+/* --------------------------------------------------- lirik trek berwaktu --- */
+
+/**
+ * Baris tanpa detik diisi lewat interpolasi: linear di antara dua jangkar
+ * yang punya detik, mundur/maju bertahap di luar jangkar, dan sebaran rata
+ * kalau model tidak memberi waktu sama sekali.
+ */
+function fillStarts(starts: number[], duration: number): number[] {
+  const n = starts.length;
+  const known: number[] = [];
+  for (let i = 0; i < n; i += 1) if (starts[i]! >= 0) known.push(i);
+
+  if (!known.length) {
+    for (let i = 0; i < n; i += 1) {
+      starts[i] = duration * (0.06 + (0.86 * i) / Math.max(1, n - 1));
+    }
+    return starts;
+  }
+
+  const first = known[0]!;
+  for (let i = 0; i < first; i += 1) {
+    starts[i] = Math.max(0, starts[first]! - (first - i) * 3.5);
+  }
+  for (let k = 0; k + 1 < known.length; k += 1) {
+    const a = known[k]!;
+    const b = known[k + 1]!;
+    for (let i = a + 1; i < b; i += 1) {
+      starts[i] = starts[a]! + ((starts[b]! - starts[a]!) * (i - a)) / (b - a);
+    }
+  }
+  const last = known[known.length - 1]!;
+  const remaining = n - 1 - last;
+  if (remaining > 0) {
+    const step = Math.min(
+      3.5,
+      Math.max(1, (duration * 0.96 - starts[last]!) / (remaining + 1)),
+    );
+    for (let i = last + 1; i < n; i += 1) {
+      starts[i] = Math.min(duration, starts[last]! + (i - last) * step);
+    }
+  }
+  return starts;
+}
+
+/** Susun penanda lirik untuk panel dari baris berwaktu model musik. */
+function trackSections(track: Track): SectionMark[] {
+  const duration = Math.max(1, track.durationSec || 1);
+  const lines = track.lines.filter((line) => line.text.trim());
+
+  const starts = fillStarts(
+    lines.map((line) =>
+      typeof line.start === "number" && Number.isFinite(line.start)
+        ? Math.min(duration, Math.max(0, line.start))
+        : -1,
+    ),
+    duration,
+  );
+
+  const marks: LineMark[] = lines.map((line, index) => ({
+    text: line.text,
+    start: starts[index]!,
+    end: index + 1 < lines.length ? starts[index + 1]! : Math.min(duration, starts[index]! + 4),
+    syllables: [],
+  }));
+
+  return [
+    {
+      id: "lirik",
+      label: "Lirik",
+      type: "verse",
+      start: 0,
+      end: duration,
+      lines: marks,
+    },
+  ];
 }

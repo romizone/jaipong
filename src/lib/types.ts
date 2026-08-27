@@ -179,6 +179,57 @@ export type Song = {
   createdAt: number;
 };
 
+/* ------------------------------------------------- lagu dari model musik --- */
+
+/** Satu baris lirik dari model musik, dengan detik mulai kalau diberi. */
+export type TimedLine = {
+  text: string;
+  start?: number;
+};
+
+/**
+ * Rencana lagu hasil tahap pertama: model bahasa menulis judul, gaya, dan
+ * lirik. Rencana inilah yang dikirim balik ke /api/render untuk dijadikan
+ * audio oleh model musik.
+ */
+export type SongPlan = {
+  title: string;
+  genreLabel: string;
+  styleTags: string[];
+  vocal: VocalType;
+  /** Deskripsi musik untuk model audio: genre, tempo, instrumen, suasana. */
+  style: string;
+  /** Lembar lirik lengkap dengan label [Bagian]. */
+  lyricsSheet: string;
+};
+
+/**
+ * Lagu hasil model musik. Audionya berkas jadi (MP3/WAV) yang disimpan di
+ * IndexedDB browser — metadata di sini sengaja kecil supaya tetap muat di
+ * localStorage bersama lagu-lagu partitur lama.
+ */
+export type Track = {
+  kind: "track";
+  id: string;
+  title: string;
+  genreLabel: string;
+  styleTags: string[];
+  vocal: VocalType;
+  /** Diisi klien setelah audionya terdekode. */
+  durationSec: number;
+  createdAt: number;
+  audioFormat: "mp3" | "wav";
+  /** Lirik berwaktu dari model musik, untuk panel lirik yang ikut berjalan. */
+  lines: TimedLine[];
+};
+
+/** Isi pustaka: trek audio baru, atau lagu partitur dari versi sebelumnya. */
+export type LibraryItem = Song | Track;
+
+export function isTrack(item: LibraryItem): item is Track {
+  return (item as Track).kind === "track";
+}
+
 /** Permintaan dari formulir di browser. */
 export type ComposeRequest = {
   prompt: string;
@@ -192,10 +243,24 @@ export type ComposeRequest = {
   duration?: number;
 };
 
-/** Peristiwa yang dialirkan server selama lagu disusun. */
+/** Permintaan pembangkitan audio: rencana lagu plus pilihan pengguna. */
+export type RenderRequest = {
+  plan: SongPlan;
+  duration?: number;
+  instrumental?: boolean;
+};
+
+/**
+ * Peristiwa yang dialirkan kedua endpoint. /api/compose mengirim status,
+ * judul, baris lirik, lalu "plan"; /api/render mengirim status, audio
+ * berpotongan-potongan (base64), lalu "track".
+ */
 export type ComposeEvent =
   | { type: "status"; stage: string; message: string }
   | { type: "title"; title: string }
   | { type: "lyric"; line: string }
-  | { type: "song"; song: Song }
+  | { type: "plan"; plan: SongPlan }
+  | { type: "audio-begin"; mime: string; format: "mp3" | "wav" }
+  | { type: "audio"; b64: string }
+  | { type: "track"; track: Track }
   | { type: "error"; message: string };

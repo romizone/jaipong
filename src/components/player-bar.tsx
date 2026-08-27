@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Visualizer } from "@/components/visualizer";
 import type { PlayerState } from "@/lib/audio/engine";
-import type { Song } from "@/lib/types";
+import { isTrack, type LibraryItem } from "@/lib/types";
 
 export function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
@@ -22,7 +22,7 @@ export function formatTime(seconds: number): string {
 }
 
 type Props = {
-  song: Song | null;
+  song: LibraryItem | null;
   state: PlayerState;
   position: number;
   duration: number;
@@ -91,7 +91,9 @@ export function PlayerBar({
             <div className="flex items-baseline gap-2">
               <p className="truncate text-sm font-semibold text-ink">{song.title}</p>
               <p className="hidden truncate text-xs text-faint sm:block">
-                {song.genreLabel} · {song.bpm} BPM · {song.key} {modeLabel(song.mode)}
+                {isTrack(song)
+                  ? song.genreLabel
+                  : `${song.genreLabel} · ${song.bpm} BPM · ${song.key} ${modeLabel(song.mode)}`}
               </p>
             </div>
 
@@ -125,7 +127,9 @@ export function PlayerBar({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            {song.vocal !== "none" && (
+            {/* Tombol mikrofon hanya untuk lagu synth lama — mematikan lapisan
+                pembaca lirik. Trek model musik sudah membawa vokalnya sendiri. */}
+            {!isTrack(song) && song.vocal !== "none" && (
               <button
                 type="button"
                 onClick={onToggleSinging}
@@ -159,8 +163,8 @@ export function PlayerBar({
               type="button"
               onClick={onDownload}
               disabled={exporting}
-              title="Unduh sebagai WAV"
-              aria-label="Unduh sebagai WAV"
+              title="Unduh audio"
+              aria-label="Unduh audio"
               className="flex size-9 items-center justify-center rounded-full border border-line text-muted transition hover:text-ink disabled:opacity-50"
             >
               {exporting ? (

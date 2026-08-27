@@ -273,8 +273,8 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
-        Lirik dan melodi ditulis AI, lalu dibunyikan langsung di browser kamu.
-        Tulis lagu orisinal — jangan menempelkan lirik milik orang lain.
+        Lirik ditulis AI, lalu audionya dibangkitkan model musik. Tulis lagu
+        orisinal — jangan menempelkan lirik milik orang lain.
       </p>
     </form>
   );

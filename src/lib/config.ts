@@ -15,11 +15,18 @@ export const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 
 /**
- * Model penyusun lagu. Namanya sengaja tidak pernah dikirim ke klien
- * dan tidak pernah muncul di pesan kesalahan.
+ * Model penulis lirik (tahap pertama). Namanya sengaja tidak pernah dikirim
+ * ke klien dan tidak pernah muncul di pesan kesalahan.
  */
 export const COMPOSER_MODEL =
   process.env.COMPOSER_MODEL ?? "google/gemini-3.7-flash";
+
+/**
+ * Model musik yang membangkitkan audionya (tahap kedua).
+ * Lyria 3 Pro menghasilkan lagu utuh; harganya per lagu, bukan per token.
+ */
+export const MUSIC_MODEL =
+  process.env.MUSIC_MODEL ?? "google/lyria-3-pro-preview";
 
 /** Atribusi aplikasi di dasbor OpenRouter. */
 export const SITE_URL = process.env.SITE_URL ?? "https://jaipong.rominur.com";

@@ -2,10 +2,10 @@
 
 import { Download, Loader2, Pause, Play, Trash2 } from "lucide-react";
 import { formatTime } from "@/components/player-bar";
-import type { Song } from "@/lib/types";
+import { isTrack, type LibraryItem } from "@/lib/types";
 
 type Props = {
-  song: Song;
+  song: LibraryItem;
   active: boolean;
   playing: boolean;
   exporting: boolean;
@@ -53,7 +53,8 @@ export function SongCard({
           {song.styleTags.length > 0 && ` · ${song.styleTags.slice(0, 3).join(", ")}`}
         </p>
         <p className="mt-0.5 font-mono text-[11px] text-faint">
-          {formatTime(song.durationSec)} · {song.bpm} BPM ·{" "}
+          {formatTime(song.durationSec)}
+          {!isTrack(song) && ` · ${song.bpm} BPM`} ·{" "}
           {song.vocal === "none" ? "instrumental" : song.vocal === "male" ? "vokal pria" : "vokal wanita"}
         </p>
       </div>
@@ -68,8 +69,8 @@ export function SongCard({
           type="button"
           onClick={onDownload}
           disabled={exporting}
-          title="Unduh sebagai WAV"
-          aria-label={`Unduh ${song.title} sebagai WAV`}
+          title="Unduh audio"
+          aria-label={`Unduh audio ${song.title}`}
           className="rounded-lg p-2 text-faint transition hover:bg-white/5 hover:text-gold-soft disabled:opacity-50"
         >
           {exporting ? (

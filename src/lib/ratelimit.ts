@@ -96,7 +96,31 @@ async function check(
   return used > limit ? { ok: false, message } : OK;
 }
 
-/** Kuota untuk satu permintaan penyusunan lagu. */
+/**
+ * Kuota tahap penulisan lirik. Lebih longgar dari kuota audio karena biayanya
+ * kecil, tapi tetap ada supaya endpoint-nya tidak bisa dipompa sendirian.
+ */
+export async function checkPlanQuota(ip: string): Promise<Quota> {
+  const burst = await check(
+    `p:b:${ip}`,
+    LIMITS.burst * 2,
+    LIMITS.burstWindowSec,
+    "Terlalu banyak permintaan dalam waktu singkat. Coba lagi beberapa menit lagi.",
+  );
+  if (!burst.ok) return burst;
+
+  return check(
+    `p:d:${ip}:${today()}`,
+    LIMITS.daily * 2,
+    86_400,
+    "Kuota harian untuk koneksi ini sudah habis. Silakan lanjut besok.",
+  );
+}
+
+/**
+ * Kuota pembangkitan audio — tahap yang benar-benar berbiaya, jadi di sinilah
+ * batas burst, harian, dan batas seluruh situs ditegakkan.
+ */
 export async function checkComposeQuota(ip: string): Promise<Quota> {
   const burst = await check(
     `s:b:${ip}`,

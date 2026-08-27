@@ -1,10 +1,12 @@
 "use client";
 
-import type { Song } from "@/lib/types";
+import { deleteAudio } from "@/lib/client/audiodb";
+import { isTrack, type LibraryItem, type Song, type Track } from "@/lib/types";
 
 /**
  * Pustaka lagu disimpan di browser masing-masing. Tidak ada basis data dan
  * tidak ada akun — lagu yang dibuat hanya milik peramban yang membuatnya.
+ * Metadata di localStorage; audio trek di IndexedDB (lihat audiodb.ts).
  *
  * Isinya dibaca lewat useSyncExternalStore, jadi halaman yang dirender di
  * server memulai dari daftar kosong dan React sendiri yang menukarnya dengan
@@ -14,28 +16,15 @@ import type { Song } from "@/lib/types";
 
 const KEY = "jaipong:library:v1";
 const MAX_SONGS = 60;
-const EMPTY: Song[] = [];
+const EMPTY: LibraryItem[] = [];
 
-let cache: Song[] | null = null;
+let cache: LibraryItem[] | null = null;
 const listeners = new Set<() => void>();
 
-function read(): Song[] {
-  if (typeof window === "undefined") return EMPTY;
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return EMPTY;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return EMPTY;
-    return parsed.filter(isPlayableSong);
-  } catch {
-    return EMPTY;
-  }
-}
-
 /**
- * Isi localStorage tidak dipercaya begitu saja: bisa berasal dari versi lama,
- * atau disunting sendiri. Lagu yang bentuknya tidak masuk akal dibuang di sini,
- * karena bpm atau bagian yang rusak berujung pada waktu NaN di mesin audio.
+ * Isi localStorage tidak dipercaya begitu saja: bisa dari versi lama atau
+ * disunting sendiri. Lagu partitur yang rusak berujung waktu NaN di mesin
+ * audio, jadi bentuknya diperiksa di sini.
  */
 function isPlayableSong(value: unknown): value is Song {
   if (!value || typeof value !== "object") return false;
@@ -62,8 +51,41 @@ function isPlayableSong(value: unknown): value is Song {
   );
 }
 
-function persist(songs: Song[]): Song[] {
-  const trimmed = songs.slice(0, MAX_SONGS);
+function isValidTrack(value: unknown): value is Track {
+  if (!value || typeof value !== "object") return false;
+  const t = value as Partial<Track>;
+  return (
+    t.kind === "track" &&
+    typeof t.id === "string" &&
+    typeof t.title === "string" &&
+    typeof t.durationSec === "number" &&
+    Number.isFinite(t.durationSec) &&
+    (t.audioFormat === "mp3" || t.audioFormat === "wav") &&
+    Array.isArray(t.styleTags) &&
+    Array.isArray(t.lines) &&
+    t.lines.every((l) => Boolean(l) && typeof l.text === "string")
+  );
+}
+
+function isValidItem(value: unknown): value is LibraryItem {
+  return isValidTrack(value) || isPlayableSong(value);
+}
+
+function read(): LibraryItem[] {
+  if (typeof window === "undefined") return EMPTY;
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return EMPTY;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return EMPTY;
+    return parsed.filter(isValidItem);
+  } catch {
+    return EMPTY;
+  }
+}
+
+function tryStore(items: LibraryItem[]): LibraryItem[] {
+  const trimmed = items.slice(0, MAX_SONGS);
   if (typeof window === "undefined") return trimmed;
   try {
     window.localStorage.setItem(KEY, JSON.stringify(trimmed));
@@ -78,6 +100,17 @@ function persist(songs: Song[]): Song[] {
       return trimmed;
     }
   }
+}
+
+function persist(items: LibraryItem[]): LibraryItem[] {
+  const kept = tryStore(items);
+  // Audio milik lagu yang tergusur ikut dibuang, supaya IndexedDB tidak
+  // menimbun berkas yatim yang tidak bisa dijangkau dari mana pun.
+  const keptIds = new Set(kept.map((item) => item.id));
+  for (const item of items) {
+    if (!keptIds.has(item.id) && isTrack(item)) deleteAudio(item.id);
+  }
+  return kept;
 }
 
 function emit(): void {
@@ -104,22 +137,23 @@ export function subscribeLibrary(listener: () => void): () => void {
   };
 }
 
-export function getLibrary(): Song[] {
+export function getLibrary(): LibraryItem[] {
   if (cache === null) cache = read();
   return cache;
 }
 
 /** Server tidak punya localStorage, jadi selalu daftar kosong yang sama. */
-export function getServerLibrary(): Song[] {
+export function getServerLibrary(): LibraryItem[] {
   return EMPTY;
 }
 
-export function saveSong(song: Song): void {
-  cache = persist([song, ...getLibrary().filter((s) => s.id !== song.id)]);
+export function saveSong(item: LibraryItem): void {
+  cache = persist([item, ...getLibrary().filter((s) => s.id !== item.id)]);
   emit();
 }
 
 export function deleteSong(id: string): void {
+  deleteAudio(id);
   cache = persist(getLibrary().filter((s) => s.id !== id));
   emit();
 }

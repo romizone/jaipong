@@ -1,12 +1,19 @@
 import { COMPOSER_MODEL, LIMITS, OPENROUTER_API_KEY } from "@/lib/config";
 import { UpstreamError, deltaText, readSse, streamChat } from "@/lib/openrouter";
-import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompt";
-import { checkComposeQuota, clientIp } from "@/lib/ratelimit";
-import { extractJson, normalizeSong } from "@/lib/song";
+import { createPlanParser } from "@/lib/plan";
+import { PLAN_PROMPT, buildUserPrompt } from "@/lib/prompt";
+import { checkPlanQuota, clientIp } from "@/lib/ratelimit";
 import type { ComposeEvent, ComposeRequest, VocalType } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 120;
+
+/**
+ * Tahap pertama: model bahasa menulis rencana lagu — judul, gaya, lirik.
+ * Judul dan tiap baris lirik dialirkan ke klien begitu selesai ditulis;
+ * di akhir, rencana utuhnya dikirim sebagai peristiwa "plan" untuk
+ * diteruskan klien ke /api/render.
+ */
 
 function sse(event: ComposeEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -35,9 +42,6 @@ export async function POST(req: Request) {
     .trim()
     .slice(0, LIMITS.maxLyricsChars);
   const styleTags = String(body.styleTags ?? "").trim().slice(0, 300);
-  // Judul ikut dijepit seperti isian lain. Tanpa String() nilai bukan teks
-  // membuat buildUserPrompt melempar kesalahan, dan tanpa slice() judul
-  // sepanjang apa pun ikut terkirim ke penyedia.
   const title = String(body.title ?? "").trim().slice(0, LIMITS.maxTitleChars);
 
   if (!prompt && !lyrics && !styleTags) {
@@ -57,7 +61,7 @@ export async function POST(req: Request) {
       ? body.vocal
       : "female";
 
-  const quota = await checkComposeQuota(clientIp(req));
+  const quota = await checkPlanQuota(clientIp(req));
   if (!quota.ok) return bad(quota.message, 429);
 
   const userPrompt = buildUserPrompt({
@@ -88,108 +92,38 @@ export async function POST(req: Request) {
       try {
         send({
           type: "status",
-          stage: "start",
-          message: "Menyiapkan ide lagu…",
+          stage: "plan",
+          message: "Menulis judul dan lirik…",
         });
 
         const upstream = await streamChat({
           model: COMPOSER_MODEL,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: PLAN_PROMPT },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.9,
-          max_tokens: LIMITS.maxOutputTokens,
-          response_format: { type: "json_object" },
+          // Rencana itu kecil; batasnya cukup untuk menggemakan lirik kustom
+          // terpanjang, tidak perlu jatah token sebesar partitur dulu.
+          max_tokens: Math.min(LIMITS.maxOutputTokens, 4_000),
           signal: abort.signal,
         });
 
-        // Regex dibuat per permintaan, bukan di tingkat modul: keduanya
-        // menyimpan lastIndex, dan dua permintaan bersamaan akan saling
-        // mengacak posisi pemindaian.
-        const titleRe = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/;
-        const lyricRe = /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
-
-        let buffer = "";
-        let titleDone = false;
-        let stage = "start";
-        /** Sampai mana buffer sudah dipindai untuk mencari baris lirik. */
-        let scanned = 0;
-        /** Baris terakhir ditahan — kutipnya bisa saja belum lengkap. */
-        let pendingLyric: string | null = null;
+        const parser = createPlanParser({
+          onTitle: (t) => send({ type: "title", title: t }),
+          onLyric: (line) => send({ type: "lyric", line }),
+        });
 
         for await (const event of readSse(upstream)) {
-          buffer += deltaText(event);
-
-          // Judul muncul paling awal di JSON — tampilkan begitu terbaca.
-          if (!titleDone) {
-            const m = titleRe.exec(buffer);
-            if (m) {
-              titleDone = true;
-              send({ type: "title", title: unescapeJson(m[1]!) });
-            } else if (buffer.length > TITLE_SCAN_LIMIT) {
-              // Judulnya ternyata jauh di belakang. Berhenti mencari daripada
-              // membaca ulang seluruh buffer tiap potongan; judulnya tetap ikut
-              // di peristiwa "song" nanti.
-              titleDone = true;
-            }
-          }
-
-          // Tahapan disimpulkan dari kunci yang sudah sampai. Setelah sampai
-          // "melody" tidak ada lagi yang perlu dicari.
-          if (stage !== "melody") {
-            const next = buffer.includes('"sections"')
-              ? "melody"
-              : buffer.includes('"instruments"')
-                ? "arrange"
-                : buffer.includes('"bpm"')
-                  ? "tempo"
-                  : "start";
-            if (next !== stage) {
-              stage = next;
-              send({ type: "status", stage, message: STAGE_TEXT[stage]! });
-            }
-          }
-
-          // Lirik dialirkan baris demi baris supaya terasa hidup. Pemindaian
-          // dilanjutkan dari tempat terakhir berhenti: kalau seluruh buffer
-          // dipindai ulang tiap potongan, satu lagu penuh berarti ratusan juta
-          // karakter yang dibaca percuma.
-          lyricRe.lastIndex = scanned;
-          let match: RegExpExecArray | null;
-          while ((match = lyricRe.exec(buffer)) !== null) {
-            if (pendingLyric) send({ type: "lyric", line: pendingLyric });
-            const line = unescapeJson(match[1]!).trim();
-            pendingLyric = line || null;
-            scanned = lyricRe.lastIndex;
-          }
+          parser.feed(deltaText(event));
         }
 
-        // Aliran selesai, jadi baris terakhir sudah pasti utuh.
-        if (pendingLyric) send({ type: "lyric", line: pendingLyric });
+        const plan = parser.end();
+        // Pilihan eksplisit pengguna menang atas tebakan model.
+        plan.vocal = vocal;
+        if (title) plan.title = title;
 
-        send({
-          type: "status",
-          stage: "render",
-          message: "Merapikan partitur…",
-        });
-
-        const song = normalizeSong(extractJson(buffer), {
-          targetDuration: duration,
-          instrumental,
-          vocalHint: vocal,
-        });
-
-        if (!song) {
-          console.error("[compose] partitur tidak terbaca", buffer.slice(0, 800));
-          send({
-            type: "error",
-            message:
-              "Lagu gagal disusun. Coba ubah deskripsinya atau pilih durasi yang lebih pendek.",
-          });
-        } else {
-          send({ type: "song", song });
-        }
+        send({ type: "plan", plan });
       } catch (error) {
         const message =
           error instanceof UpstreamError
@@ -214,23 +148,4 @@ export async function POST(req: Request) {
       Connection: "keep-alive",
     },
   });
-}
-
-/** Sesudah sekian karakter, judul dianggap tidak akan muncul di awal JSON. */
-const TITLE_SCAN_LIMIT = 8_000;
-
-const STAGE_TEXT: Record<string, string> = {
-  start: "Menyiapkan ide lagu…",
-  tempo: "Menentukan tempo dan nada dasar…",
-  arrange: "Memilih instrumen dan aransemen…",
-  melody: "Menulis lirik dan melodi…",
-  render: "Merapikan partitur…",
-};
-
-function unescapeJson(raw: string): string {
-  try {
-    return JSON.parse(`"${raw}"`) as string;
-  } catch {
-    return raw;
-  }
 }

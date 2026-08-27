@@ -51,6 +51,9 @@ export async function streamChat(body: {
   max_tokens?: number;
   temperature?: number;
   response_format?: { type: "json_object" };
+  /** Untuk model audio: minta keluaran audio, bukan hanya teks. */
+  modalities?: string[];
+  audio?: { format?: string; voice?: string };
   signal?: AbortSignal;
 }): Promise<Response> {
   const { signal, ...payload } = body;
@@ -109,4 +112,15 @@ export function deltaText(event: Record<string, unknown>): string {
     | Array<{ delta?: { content?: string | null } }>
     | undefined;
   return choices?.[0]?.delta?.content ?? "";
+}
+
+/**
+ * Ambil potongan audio (base64) dari satu event SSE. Model musik mengirim
+ * audionya lewat delta.audio.data — hanya kalau permintaannya streaming.
+ */
+export function deltaAudio(event: Record<string, unknown>): string {
+  const choices = event.choices as
+    | Array<{ delta?: { audio?: { data?: string | null } } }>
+    | undefined;
+  return choices?.[0]?.delta?.audio?.data ?? "";
 }

@@ -9,39 +9,37 @@ Dibuat dengan Next.js 16 + OpenRouter, mengikuti pola yang sama dengan
 
 ## Cara kerjanya
 
-OpenRouter menyalurkan model bahasa dan gambar — **tidak ada model musik di
-sana**, jadi lagunya tidak bisa dibangkitkan sebagai audio seperti Suno.
-Jaipong membagi pekerjaannya jadi dua:
+Penyusunan lagu berjalan dua tahap, dua-duanya lewat OpenRouter:
 
-| Bagian | Siapa yang mengerjakan | Di mana |
+| Tahap | Model | Yang dihasilkan |
 | --- | --- | --- |
-| Judul, lirik, tempo, nada dasar, akor, melodi, pilihan instrumen | Model bahasa lewat OpenRouter | Server |
-| Bunyi: synth, drum, vokal formant, reverb, mixing, ekspor WAV | Web Audio API | Browser pengguna |
+| 1. `/api/compose` | Model bahasa (bawaan: Gemini Flash) | Judul, genre, deskripsi gaya, dan lirik — dialirkan baris demi baris ke layar |
+| 2. `/api/render` | Model musik (bawaan: **Lyria 3 Pro**) | Audio jadi (MP3 stereo 44,1 kHz) beserta lirik berwaktu |
 
-Model tidak membuat audio — ia menulis **partitur** dalam bentuk JSON:
+Rencana dari tahap pertama ditulis dalam format baris-per-baris, bukan JSON —
+supaya bisa dialirkan ke layar begitu tiap barisnya selesai, dan keluaran yang
+terpotong pun tetap terpakai tanpa perlu perbaikan JSON:
 
-```jsonc
-{
-  "title": "Senja di Ciwidey",
-  "bpm": 112, "key": "A", "mode": "pelog", "groove": "jaipong",
-  "instruments": { "lead": "vocal", "chords": "gamelan", "bass": "bass_round", "arp": "gamelan" },
-  "sections": [{
-    "id": "verse1", "type": "verse", "label": "Verse 1", "bars": 8, "energy": 0.55,
-    "chords": ["Am","Am","F","F","C","C","G","G"],
-    "lines": [{
-      "text": "Senja turun di Ciwidey",
-      "notes": [ { "d": 3, "t": 0, "l": 0.5, "s": "Sen" }, { "d": 3, "t": 0.5, "l": 0.5, "s": "ja" } ]
-    }]
-  }]
-}
+```
+JUDUL: Goyang Panen Rampak
+GENRE: Jaipong Sunda
+TAG: jaipong, kendang sunda, suling, ceria
+VOKAL: wanita
+GAYA: Jaipong Sunda bertempo lincah sekitar 120 BPM, kendang rapat, suling …
+LIRIK:
+[Verse 1]
+Pare koneng di sawah
+Hate bungah sumringah
 ```
 
-`d` adalah derajat tangga nada (1 = nada dasar), `t` ketukan mulai, `l` panjang
-nada, `s` suku kata yang dinyanyikan. Karena nadanya ditulis sebagai derajat —
-bukan nomor MIDI — melodinya selalu masuk kunci, apa pun yang dikarang model.
+Tahap kedua mengirim rencana itu ke model musik dan menerima audionya sebagai
+aliran base64 lewat SSE, plus lirik berwaktu (`[12.0:] Pare koneng di sawah`)
+yang menggerakkan panel lirik. Audionya disimpan di IndexedDB browser —
+tidak ada salinan di server.
 
-Suaranya adalah sintesis, bukan rekaman manusia. Terdengar seperti synth yang
-menyanyi, bukan seperti penyanyi di studio.
+Vokalnya nyanyian sungguhan dari model musik, bukan sintesis formant. Mesin
+synth Web Audio yang lama tetap ada untuk memutar lagu-lagu partitur yang
+dibuat versi sebelumnya.
 
 ## Menjalankan
 
@@ -62,9 +60,14 @@ OPENROUTER_API_KEY=sk-or-...
 ```
 
 Selebihnya opsional dan sudah ada nilai bawaannya — lihat [.env.example](.env.example)
-untuk pilihan model, pagar aransemen, dan batas kuota. Tidak ada satu pun
-variabel yang di-prefix `NEXT_PUBLIC_`, jadi nama model dan kunci tidak pernah
-sampai ke browser.
+untuk pilihan model dan batas kuota. Tidak ada satu pun variabel yang
+di-prefix `NEXT_PUBLIC_`, jadi nama model dan kunci tidak pernah sampai ke
+browser.
+
+**Biaya.** Model musiknya dibayar per lagu (Lyria 3 Pro ± $0,08/lagu), bukan
+per token. Dengan kuota bawaan (600 lagu global per hari), plafon terburuknya
+sekitar $48/hari — kecilkan `COMPOSE_GLOBAL_DAILY_LIMIT` kalau itu terlalu
+besar.
 
 Kuota per IP disimpan di memori proses. Di Vercel tiap instance punya memorinya
 sendiri, jadi batasnya bisa lebih longgar dari angka yang tertulis. Isi
@@ -76,62 +79,55 @@ persis.
 ```
 src/
   app/
-    api/compose/route.ts   Alirkan penyusunan lagu (SSE): status, judul, lirik, partitur
+    api/compose/route.ts   Tahap 1 (SSE): status, judul, baris lirik, lalu rencana lagu
+    api/render/route.ts    Tahap 2 (SSE): audio dari model musik, berpotongan base64
     api/health/route.ts    Cek konfigurasi tanpa membocorkan kunci
     page.tsx layout.tsx    Halaman studio
     error.tsx              Jaring pengaman kalau halaman gagal dirender
   lib/
     config.ts              Semua env var, hanya sisi server
     openrouter.ts          Klien OpenRouter + terjemahan pesan kesalahan
-    prompt.ts              Instruksi penyusun lagu — di sinilah kualitas lagu ditentukan
-    song.ts                Perbaiki dan jepit JSON dari model jadi lagu yang pasti bisa dimainkan
+    prompt.ts              Instruksi kedua tahap — di sinilah kualitas lagu ditentukan
+    plan.ts                Pengurai rencana yang mengalir + lirik berwaktu dari model musik
     ratelimit.ts           Kuota per IP (memori, atau Upstash kalau diisi)
-    audio/
-      theory.ts            Tangga nada, simbol akor, voicing
-      instruments.ts       25 suara: vokal formant, suling, gamelan, bass, pad, …
-      drums.ts             Perkusi sintetis, termasuk kendang dan gong
-      grooves.ts           Pola ketukan per genre
-      timeline.ts          Partitur -> daftar peristiwa berwaktu (bas, arpeggio, drum, isian)
-      engine.ts            Bus, reverb, delay, pembatas puncak; pemutar + render offline
-      wav.ts               AudioBuffer -> WAV 16-bit
+    client/
+      storage.ts           Metadata pustaka di localStorage
+      audiodb.ts           Audio per lagu di IndexedDB
+      track-player.ts      Pemutar trek: decode ke AudioBuffer, analyser, seek
+      stream.ts            Pembaca SSE di sisi browser
+    audio/                 Mesin synth lama — tetap ada untuk lagu partitur lama
+      theory.ts instruments.ts drums.ts grooves.ts timeline.ts engine.ts wav.ts
 ```
 
 ## Catatan rancangan
 
-**Model tidak dipercaya begitu saja.** `src/lib/song.ts` menjepit setiap nilai
-ke rentang aman, memperbaiki JSON yang terpotong karena kehabisan token,
-mengulang akor supaya jumlahnya pas dengan birama, dan membuatkan melodi
-cadangan untuk baris lirik yang tidak diberi nada. Fungsi normalisasinya tidak
-pernah melempar kesalahan — paling buruk ia mengembalikan `null`.
+**Dua endpoint, bukan satu.** Tahap lirik dan tahap audio dipisah supaya
+masing-masing selesai jauh di bawah batas waktu fungsi serverless; kuota yang
+mahal (per lagu) ditegakkan di `/api/render`, tempat biayanya benar-benar
+terjadi.
 
-**Penjadwalan bertahap.** Lagu tiga menit berisi ribuan peristiwa audio.
-Menjadwalkannya sekaligus membuat browser tersendat, jadi pemutar hanya
-menjadwalkan sekitar 1,4 detik ke depan setiap 120 milidetik.
+**Format rencana anti-terpotong.** Rencana lagu ditulis baris-per-baris, bukan
+JSON. Keluaran model yang putus di tengah tidak butuh perbaikan apa pun —
+baris yang sudah utuh tetap terpakai, dan pengurainya (`src/lib/plan.ts`)
+mengalirkan judul serta tiap baris lirik ke layar begitu selesai ditulis.
 
-**Puncak dijaga.** Bus melewati kompresor lalu pembatas berbentuk kurva tanh,
-jadi campuran seramai apa pun tidak pernah melewati 0 dBFS.
+**Jangan percaya parameter, percaya berkas.** Model musik diminta WAV tapi
+mengirim MP3; formatnya ditebak dari byte pertama berkasnya, bukan dari
+parameter permintaan.
 
-**Ukuran birama ikut groove.** Hampir semuanya 4/4; `waltz` 3/4. Angkanya
-diturunkan dari groove (`beatsPerBar` di `src/lib/types.ts`), bukan disimpan
-di lagu, jadi lagu lama di localStorage tetap terbaca.
+**Trek diputar lewat Web Audio, bukan `<audio>`.** MP3-nya didekode penuh ke
+`AudioBuffer` (`src/lib/client/track-player.ts`). Mulai putarnya tunduk pada
+AudioContext yang sudah dibuka saat pengguna mengeklik — bukan pada kebijakan
+autoplay elemen media, yang menolak `play()` semenit setelah klik terakhir —
+dan visualizer memakai analyser yang sama dengan pemutar lama.
 
-**Dawai dihitung sendiri.** Petikan gitar, harpa, dan arpeggio memakai
-Karplus-Strong yang dihitung langsung ke dalam buffer. Cara yang lebih
-ringkas — `DelayNode` berumpan balik dengan `delayTime = 1/freq` — tidak bisa
-dipakai: Web Audio menjepit delay di dalam siklus ke satu render quantum
-(sekitar 2,9 ms), jadi semua nada di atas ~345 Hz akan keluar dengan tinggi
-nada yang sama.
+**Audio milik browser pengguna.** Metadata pustaka di localStorage, berkas
+audionya di IndexedDB; lagu yang tergusur dari pustaka ikut menghapus
+audionya. Server tidak menyimpan apa pun.
 
-**Vokal ada dua lapis.** Melodi dibawakan synth formant (tiga filter bandpass
-mengikuti vokal a/i/u/e/o dari suku katanya) — lapisan inilah yang ikut terekam
-ke WAV. Di atasnya, `SpeechSynthesis` mengucapkan liriknya saat diputar
-langsung; ini bisa dimatikan lewat tombol mikrofon dan memang tidak ikut
-terekspor, karena browser tidak mengalirkannya lewat Web Audio.
-
-**Kalau nanti ada model musik sungguhan.** Semua yang berhubungan dengan
-penyedia terkumpul di `src/lib/openrouter.ts` dan `src/app/api/compose/route.ts`.
-Menambah penyedia audio nyata berarti menambah satu jalur di sana, tanpa
-menyentuh mesin audionya.
+**Mesin synth lama tidak dibuang.** Lagu partitur dari versi sebelumnya tetap
+bisa diputar dan diekspor WAV; `src/lib/audio/` utuh dan hanya dipakai untuk
+itu.
 
 ## Lisensi
 
