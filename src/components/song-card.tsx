@@ -1,6 +1,6 @@
 "use client";
 
-import { Pause, Play, Trash2 } from "lucide-react";
+import { Download, Loader2, Pause, Play, Trash2 } from "lucide-react";
 import { formatTime } from "@/components/player-bar";
 import type { Song } from "@/lib/types";
 
@@ -8,11 +8,21 @@ type Props = {
   song: Song;
   active: boolean;
   playing: boolean;
+  exporting: boolean;
   onPlay: () => void;
+  onDownload: () => void;
   onDelete: () => void;
 };
 
-export function SongCard({ song, active, playing, onPlay, onDelete }: Props) {
+export function SongCard({
+  song,
+  active,
+  playing,
+  exporting,
+  onPlay,
+  onDownload,
+  onDelete,
+}: Props) {
   return (
     <article
       className={`group relative flex items-center gap-3 rounded-xl2 border p-3 transition ${
@@ -48,14 +58,36 @@ export function SongCard({ song, active, playing, onPlay, onDelete }: Props) {
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label={`Hapus ${song.title}`}
-        className="shrink-0 rounded-lg p-2 text-faint opacity-0 transition hover:bg-white/5 hover:text-rose focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <Trash2 size={15} aria-hidden />
-      </button>
+      <div className="flex shrink-0 items-center">
+        {/*
+          Unduh ada di sini, bukan hanya di bilah pemutar. Bilah itu baru muncul
+          setelah ada lagu yang diputar, jadi sehabis halaman dimuat ulang tidak
+          ada satu pun jalan untuk mengunduh lagu yang sudah tersimpan.
+        */}
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={exporting}
+          title="Unduh sebagai WAV"
+          aria-label={`Unduh ${song.title} sebagai WAV`}
+          className="rounded-lg p-2 text-faint transition hover:bg-white/5 hover:text-gold-soft disabled:opacity-50"
+        >
+          {exporting ? (
+            <Loader2 size={15} className="animate-spin" aria-hidden />
+          ) : (
+            <Download size={15} aria-hidden />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Hapus ${song.title}`}
+          className="rounded-lg p-2 text-faint opacity-0 transition hover:bg-white/5 hover:text-rose focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Trash2 size={15} aria-hidden />
+        </button>
+      </div>
     </article>
   );
 }

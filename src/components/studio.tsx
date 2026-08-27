@@ -47,7 +47,8 @@ export function Studio() {
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(0.9);
   const [singing, setSinging] = useState(true);
-  const [exporting, setExporting] = useState(false);
+  /** Id lagu yang sedang dirender jadi WAV — satu ekspor pada satu waktu. */
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   const playerRef = useRef<SongPlayer | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -201,28 +202,39 @@ export function Studio() {
 
   /* ------------------------------------------------------------ unduh --- */
 
-  const download = useCallback(async () => {
-    if (!current || exporting) return;
-    setExporting(true);
-    try {
-      const buffer = await renderSong(current);
-      const blob = audioBufferToWav(buffer);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${safeFilename(current.title)}.wav`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      // Beri jeda sebelum melepas URL, kalau tidak unduhan bisa terputus.
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (caught) {
-      console.error(caught);
-      setError("Gagal menyiapkan berkas WAV. Coba lagi.");
-    } finally {
-      setExporting(false);
-    }
-  }, [current, exporting]);
+  /**
+   * Render satu lagu jadi WAV lalu serahkan ke browser. Lagunya diterima
+   * sebagai argumen, bukan diambil dari "current", supaya kartu di pustaka
+   * bisa mengunduh tanpa harus memutarnya lebih dulu.
+   */
+  const download = useCallback(
+    async (song: Song) => {
+      if (exportingId) return;
+      setExportingId(song.id);
+      try {
+        const buffer = await renderSong(song);
+        const blob = audioBufferToWav(buffer);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${safeFilename(song.title)}.wav`;
+        document.body.appendChild(link);
+        link.click();
+
+        // Elemennya dibiarkan sebentar di DOM: sebagian browser membatalkan
+        // unduhan kalau <a>-nya dicabut sebelum unduhan sempat dimulai.
+        setTimeout(() => link.remove(), 1_000);
+        // Beri jeda sebelum melepas URL, kalau tidak unduhan bisa terputus.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      } catch (caught) {
+        console.error(caught);
+        setError("Gagal menyiapkan berkas WAV. Coba lagi.");
+      } finally {
+        setExportingId(null);
+      }
+    },
+    [exportingId],
+  );
 
   const getAnalyser = useCallback(() => playerRef.current?.frequencyData ?? null, []);
 
@@ -322,7 +334,9 @@ export function Studio() {
                       song={song}
                       active={current?.id === song.id}
                       playing={current?.id === song.id && playerState === "playing"}
+                      exporting={exportingId === song.id}
                       onPlay={() => playSong(song)}
+                      onDownload={() => void download(song)}
                       onDelete={() => remove(song)}
                     />
                   ))}
@@ -352,14 +366,14 @@ export function Studio() {
         duration={timeline?.duration ?? 0}
         volume={volume}
         singing={singing}
-        exporting={exporting}
+        exporting={exportingId === current?.id}
         getAnalyser={getAnalyser}
         onToggle={toggle}
         onRestart={() => seek(0)}
         onSeek={seek}
         onVolume={changeVolume}
         onToggleSinging={toggleSinging}
-        onDownload={download}
+        onDownload={() => current && void download(current)}
       />
     </>
   );
