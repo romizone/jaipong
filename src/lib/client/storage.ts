@@ -26,13 +26,40 @@ function read(): Song[] {
     if (!raw) return EMPTY;
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return EMPTY;
-    return parsed.filter(
-      (s): s is Song =>
-        Boolean(s) && typeof s === "object" && Array.isArray((s as Song).sections),
-    );
+    return parsed.filter(isPlayableSong);
   } catch {
     return EMPTY;
   }
+}
+
+/**
+ * Isi localStorage tidak dipercaya begitu saja: bisa berasal dari versi lama,
+ * atau disunting sendiri. Lagu yang bentuknya tidak masuk akal dibuang di sini,
+ * karena bpm atau bagian yang rusak berujung pada waktu NaN di mesin audio.
+ */
+function isPlayableSong(value: unknown): value is Song {
+  if (!value || typeof value !== "object") return false;
+  const s = value as Partial<Song>;
+  return (
+    typeof s.id === "string" &&
+    typeof s.title === "string" &&
+    typeof s.bpm === "number" &&
+    Number.isFinite(s.bpm) &&
+    s.bpm > 0 &&
+    typeof s.key === "string" &&
+    typeof s.groove === "string" &&
+    Array.isArray(s.styleTags) &&
+    Array.isArray(s.sections) &&
+    s.sections.length > 0 &&
+    s.sections.every(
+      (section) =>
+        Boolean(section) &&
+        typeof section === "object" &&
+        Number.isFinite(section.bars) &&
+        Array.isArray(section.chords) &&
+        Array.isArray(section.lines),
+    )
+  );
 }
 
 function persist(songs: Song[]): Song[] {

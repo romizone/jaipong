@@ -324,37 +324,96 @@ function breathy(config: {
   };
 }
 
-/** Petikan dawai gaya Karplus-Strong sederhana. */
-function plucked(config: { damp: number; level: number; body: number }): Voice {
+type StringConfig = { damp: number; level: number; body: number };
+
+/** Dawai yang sudah dihitung, dipakai ulang antar nada yang sama. */
+const stringCache = new WeakMap<BaseAudioContext, Map<string, AudioBuffer>>();
+const STRING_CACHE_MAX = 96;
+
+/**
+ * Hitung satu dawai Karplus-Strong langsung ke dalam buffer.
+ *
+ * Cara yang lebih ringkas — DelayNode dengan umpan balik dan delayTime = 1/freq —
+ * tidak bisa dipakai: spesifikasi Web Audio menjepit delay di dalam siklus ke
+ * minimum satu render quantum (128 sampel, sekitar 2,9 ms pada 44,1 kHz), jadi
+ * setiap nada di atas ~345 Hz keluar dengan tinggi nada yang sama. Menghitungnya
+ * sendiri membuat nadanya benar di seluruh rentang, dan hasilnya sama persis
+ * antara pemutaran langsung dan ekspor WAV.
+ */
+function stringBuffer(
+  ctx: BaseAudioContext,
+  freq: number,
+  seconds: number,
+  config: StringConfig,
+): AudioBuffer {
+  const rate = ctx.sampleRate;
+  // Panjang gelung = satu periode dalam sampel.
+  const period = Math.max(2, Math.round(rate / freq));
+  const length = Math.max(period + 2, Math.round(seconds * rate));
+
+  const key = period + "|" + length + "|" + config.damp;
+  let byKey = stringCache.get(ctx);
+  if (!byKey) {
+    byKey = new Map();
+    stringCache.set(ctx, byKey);
+  }
+  const cached = byKey.get(key);
+  if (cached) return cached;
+
+  const buffer = ctx.createBuffer(1, length, rate);
+  const data = buffer.getChannelData(0);
+
+  // Petikan awal: derau dengan deret tetap (LCG) supaya ekspor selalu sama.
+  let seed = 4159 + period;
+  for (let i = 0; i < period; i += 1) {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    data[i] = seed / 2147483648 - 1;
+  }
+
+  // "damp" berlaku sekali tiap putaran gelung, jadi nada tinggi — yang
+  // putarannya jauh lebih sering per detik — akan lenyap terlalu cepat kalau
+  // angkanya dipakai apa adanya. Eksponennya disesuaikan supaya lama luruhnya
+  // kira-kira sama di seluruh rentang.
+  const perLoop = Math.pow(config.damp, 220 / Math.max(60, freq));
+  for (let i = period; i < length; i += 1) {
+    data[i] = perLoop * 0.5 * (data[i - period]! + data[i - period + 1]!);
+  }
+
+  if (byKey.size >= STRING_CACHE_MAX) {
+    const oldest = byKey.keys().next().value;
+    if (oldest !== undefined) byKey.delete(oldest);
+  }
+  byKey.set(key, buffer);
+  return buffer;
+}
+
+/** Petikan dawai gaya Karplus-Strong. */
+function plucked(config: StringConfig): Voice {
   return ({ ctx, dest, freq, t, dur, gain }) => {
-    const length = Math.min(4, Math.max(0.25, dur + 0.6));
-    const stop = t + length;
+    if (!Number.isFinite(freq) || freq <= 20) return;
+
+    // Panjang dibulatkan ke seperempat detik supaya buffer-nya bisa dipakai ulang.
+    const seconds = Math.min(4, Math.max(0.3, Math.ceil((dur + 0.6) * 4) / 4));
+    const stop = t + seconds;
 
     const source = ctx.createBufferSource();
-    source.buffer = noiseBuffer(ctx);
-    source.loop = true;
-    const burst = ctx.createGain();
-    burst.gain.setValueAtTime(1, t);
-    burst.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+    source.buffer = stringBuffer(ctx, freq, seconds, config);
     source.start(t);
     source.stop(stop);
 
-    // Delay sepanjang satu periode = tinggi nada; umpan balik = dawai.
-    const delay = ctx.createDelay(1);
-    delay.delayTime.setValueAtTime(1 / freq, t);
-    const feedback = ctx.createGain();
-    feedback.gain.setValueAtTime(config.damp, t);
-    const damping = ctx.createBiquadFilter();
-    damping.type = "lowpass";
-    damping.frequency.setValueAtTime(Math.min(9000, freq * config.body), t);
-
-    source.connect(burst).connect(delay);
-    delay.connect(damping).connect(feedback).connect(delay);
+    // "body" mengatur warna badan dawai, seperti sebelumnya.
+    const tone = ctx.createBiquadFilter();
+    tone.type = "lowpass";
+    tone.frequency.setValueAtTime(
+      Math.min(9000, Math.max(300, freq * config.body)),
+      t,
+    );
 
     const amp = ctx.createGain();
-    amp.gain.setValueAtTime(gain * config.level, t);
+    amp.gain.setValueAtTime(Math.max(0.0002, gain * config.level), t);
     amp.gain.exponentialRampToValueAtTime(0.0001, stop);
-    delay.connect(amp).connect(dest);
+
+    source.connect(tone).connect(amp).connect(dest);
   };
 }
 
@@ -655,11 +714,15 @@ const VOICES: Record<string, Voice> = {
   upright: plucked({ damp: 0.93, level: 0.85, body: 2.6 }),
 };
 
-/** Ambil suara berdasarkan nama; jatuh ke pad kalau namanya tidak dikenal. */
+/**
+ * Ambil suara berdasarkan nama; jatuh ke pad kalau namanya tidak dikenal.
+ * Diperiksa dengan Object.hasOwn supaya nama seperti "constructor" atau
+ * "toString" tidak mengembalikan sesuatu dari prototipe.
+ */
 export function voice(name: string): Voice {
-  return VOICES[name] ?? VOICES.pad!;
+  return Object.hasOwn(VOICES, name) ? VOICES[name]! : VOICES.pad!;
 }
 
 export function hasVoice(name: string): boolean {
-  return name !== "none" && name in VOICES;
+  return name !== "none" && Object.hasOwn(VOICES, name);
 }

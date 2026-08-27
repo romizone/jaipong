@@ -28,6 +28,8 @@ export const SITE_NAME = process.env.SITE_NAME ?? "Jaipong";
 export const LIMITS = {
   /** Panjang maksimum deskripsi lagu dari pengguna. */
   maxPromptChars: num("MAX_PROMPT_CHARS", 2_000),
+  /** Panjang maksimum judul yang dipaksakan pengguna. */
+  maxTitleChars: num("MAX_TITLE_CHARS", 120),
   /** Panjang maksimum lirik yang ditempel sendiri oleh pengguna. */
   maxLyricsChars: num("MAX_LYRICS_CHARS", 6_000),
   /** Batas token keluaran untuk satu lagu. */

@@ -23,7 +23,7 @@ const DURATIONS = [
   { value: 45, label: "45 dtk" },
   { value: 90, label: "1.5 mnt" },
   { value: 150, label: "2.5 mnt" },
-  { value: 210, label: "3.5 mnt" },
+  { value: 240, label: "4 mnt" },
 ];
 
 type Props = {
@@ -74,7 +74,6 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
     if (!canSubmit) return;
     onSubmit({
       prompt: prompt.trim(),
-      custom,
       title: custom ? title.trim() : undefined,
       lyrics: custom ? lyrics.trim() : undefined,
       styleTags: styleTags.trim(),

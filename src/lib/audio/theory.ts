@@ -144,11 +144,18 @@ export type Chord = {
   intervals: number[];
   /** Semiton nada bas kalau akornya bertanda garis miring, mis. "Am/G". */
   bass: number;
+  /**
+   * true kalau akhiran simbolnya benar-benar cocok dengan salah satu kualitas
+   * yang dikenal. false berarti akor tetap bisa dibunyikan, tapi sebagai
+   * tebakan — dipakai isPlayableChord untuk menolak simbol karangan.
+   */
+  recognized: boolean;
 };
 
 /** Samakan penulisan simbol akor sebelum diurai. */
 function normalizeSuffix(raw: string): string {
   return raw
+    .replace(/[()]/g, "")
     .replace(/[Δ∆]/g, "maj7")
     .replace(/[øØ]/g, "m7b5")
     .replace(/[°o]/g, "dim")
@@ -178,17 +185,17 @@ export function parseChord(symbol: string): Chord | null {
   if (root === null) return null;
 
   const suffix = normalizeSuffix(m[2] ?? "");
-  const match = QUALITIES.find(([name]) =>
+  const exact = QUALITIES.find(([name]) =>
     name === "" ? suffix === "" : suffix.toLowerCase() === name.toLowerCase(),
   );
   // Simbol yang tidak persis cocok (mis. "C7b9") diturunkan ke akor terdekat
   // yang awalannya sama, jadi lagu tetap bisa dimainkan.
-  const intervals =
-    match?.[1] ??
-    QUALITIES.find(
-      ([name]) => name !== "" && suffix.toLowerCase().startsWith(name.toLowerCase()),
-    )?.[1] ??
-    [0, 4, 7];
+  const prefix = exact
+    ? undefined
+    : QUALITIES.find(
+        ([name]) => name !== "" && suffix.toLowerCase().startsWith(name.toLowerCase()),
+      );
+  const intervals = exact?.[1] ?? prefix?.[1] ?? [0, 4, 7];
 
   let bass = root;
   if (bassPart) {
@@ -196,12 +203,23 @@ export function parseChord(symbol: string): Chord | null {
     if (parsed !== null) bass = parsed;
   }
 
-  return { symbol: trimmed, root, intervals, bass };
+  return {
+    symbol: trimmed,
+    root,
+    intervals,
+    bass,
+    recognized: Boolean(exact ?? prefix),
+  };
 }
 
-/** Apakah simbol ini bisa dimainkan? Dipakai server untuk menyaring akor. */
+/**
+ * Apakah simbol ini benar-benar sebuah akor? Dipakai server untuk menyaring
+ * karangan model. Sengaja lebih ketat dari parseChord: "Gibberish" memang
+ * bisa dibunyikan sebagai G mayor, tapi menerimanya berarti membiarkan
+ * satu birama berbunyi salah tanpa ada yang tahu.
+ */
 export function isPlayableChord(symbol: string): boolean {
-  return parseChord(symbol) !== null;
+  return parseChord(symbol)?.recognized === true;
 }
 
 /**

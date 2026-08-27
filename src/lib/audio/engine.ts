@@ -20,8 +20,19 @@ export type Graph = {
   master: GainNode;
 };
 
-/** Impuls buatan untuk reverb — derau yang meluruh secara eksponensial. */
+/**
+ * Impuls buatan untuk reverb — derau yang meluruh secara eksponensial.
+ *
+ * Menghitungnya berarti mengisi 2 x 106.000 sampel, dan jalur audio dibangun
+ * ulang tiap kali tombol putar ditekan atau posisi digeser. Karena deretnya
+ * tetap, hasilnya cukup dihitung sekali per AudioContext.
+ */
+const impulseCache = new WeakMap<BaseAudioContext, AudioBuffer>();
+
 function impulse(ctx: BaseAudioContext, seconds: number, decay: number): AudioBuffer {
+  const cached = impulseCache.get(ctx);
+  if (cached) return cached;
+
   const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
   const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
   let seed = 9781;
@@ -33,6 +44,7 @@ function impulse(ctx: BaseAudioContext, seconds: number, decay: number): AudioBu
       data[i] = white * Math.pow(1 - i / length, decay);
     }
   }
+  impulseCache.set(ctx, buffer);
   return buffer;
 }
 
@@ -149,12 +161,22 @@ export function createGraph(ctx: BaseAudioContext, output: AudioNode): Graph {
   return { buses, master };
 }
 
-/** Jadwalkan satu peristiwa pada waktu AudioContext tertentu. */
+/**
+ * Jadwalkan satu peristiwa pada waktu AudioContext tertentu.
+ *
+ * Angka yang bukan bilangan berhingga dibuang di sini. Lagu tersimpan bisa
+ * saja rusak (localStorage disunting, atau versi lama yang bentuknya beda),
+ * dan osc.start(NaN) melempar kesalahan yang menjatuhkan seluruh halaman.
+ */
 function schedule(ctx: BaseAudioContext, graph: Graph, event: AudioEvent, at: number): void {
+  if (!Number.isFinite(at) || !Number.isFinite(event.gain)) return;
+
   if (event.kind === "drum") {
     drum(event.drum)({ ctx, dest: graph.buses.drums, t: at, gain: event.gain });
     return;
   }
+  if (!Number.isFinite(event.freq) || !Number.isFinite(event.dur)) return;
+
   voice(event.voice)({
     ctx,
     dest: graph.buses[event.bus],
@@ -233,6 +255,8 @@ export class SongPlayer {
   private singing = true;
   private spoken = new Set<number>();
   private lineIndex: Array<{ line: LineMark; id: number }> = [];
+  /** Ucapan yang sudah dijadwalkan tapi belum berbunyi; dibatalkan saat berhenti. */
+  private pendingSpeech = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(private callbacks: PlayerCallbacks = {}) {}
 
@@ -279,6 +303,8 @@ export class SongPlayer {
   load(song: Song): void {
     this.stop();
     this.song = song;
+    // buildTimeline menyimpan hasilnya per lagu, jadi panel lirik dan pemutar
+    // memakai perhitungan yang sama, bukan menghitung dua kali.
     this.timeline = buildTimeline(song);
     this.pausedAt = 0;
 
@@ -389,6 +415,8 @@ export class SongPlayer {
     this.timer = null;
     this.graph?.master.disconnect();
     this.graph = null;
+    for (const handle of this.pendingSpeech) clearTimeout(handle);
+    this.pendingSpeech.clear();
     cancelSpeech();
   }
 
@@ -444,10 +472,12 @@ export class SongPlayer {
       const seconds = Math.max(0.6, line.end - line.start);
       const syllableCount = Math.max(1, line.syllables.length);
 
-      window.setTimeout(() => {
+      const handle = setTimeout(() => {
+        this.pendingSpeech.delete(handle);
         if (this.state !== "playing") return;
         speakLine(line.text, seconds, syllableCount, this.song!.vocal);
       }, delayMs);
+      this.pendingSpeech.add(handle);
     }
   }
 }
@@ -466,10 +496,26 @@ function lowerBound(events: AudioEvent[], target: number): number {
 
 /* -------------------------------------------------------------- suara --- */
 
-let cachedVoice: SpeechSynthesisVoice | null | undefined;
+/**
+ * Satu simpanan per jenis suara. Sebelumnya hanya ada satu, jadi lagu vokal
+ * pria yang diputar setelah lagu vokal wanita ikut memakai suara wanita.
+ */
+const cachedVoices: Record<"male" | "female", SpeechSynthesisVoice | null | undefined> = {
+  male: undefined,
+  female: undefined,
+};
+
+// Nama suara tidak baku antar sistem, jadi pencocokannya sekadar usaha.
+// "damayanti" sengaja hanya ada di daftar wanita — itu suara wanita id-ID,
+// dan mencantumkannya di kedua daftar membuat vokal pria salah pilih.
+const VOICE_HINT: Record<"male" | "female", RegExp> = {
+  male: /(male|pria|laki|arif|ardi|budi)/i,
+  female: /(female|wanita|perempuan|damayanti|siti|dewi)/i,
+};
 
 function pickSpeechVoice(vocal: "male" | "female"): SpeechSynthesisVoice | null {
-  if (cachedVoice !== undefined) return cachedVoice;
+  const cached = cachedVoices[vocal];
+  if (cached !== undefined) return cached;
 
   const voices = window.speechSynthesis.getVoices();
   if (!voices.length) return null;
@@ -477,10 +523,17 @@ function pickSpeechVoice(vocal: "male" | "female"): SpeechSynthesisVoice | null 
   const indonesian = voices.filter((v) => v.lang.toLowerCase().startsWith("id"));
   const pool = indonesian.length ? indonesian : voices;
 
-  // Nama suara tidak baku antar sistem, jadi pencocokannya sekadar usaha.
-  const wanted = vocal === "male" ? /(male|pria|damayanti|arif)/i : /(female|wanita|damayanti|siti)/i;
-  cachedVoice = pool.find((v) => wanted.test(v.name)) ?? pool[0] ?? null;
-  return cachedVoice;
+  // Kalau tidak ada yang cocok, jangan ambil suara yang sudah jelas milik
+  // jenis lain — lebih baik jatuh ke suara pertama yang netral.
+  const other = VOICE_HINT[vocal === "male" ? "female" : "male"];
+  const picked =
+    pool.find((v) => VOICE_HINT[vocal].test(v.name)) ??
+    pool.find((v) => !other.test(v.name)) ??
+    pool[0] ??
+    null;
+
+  cachedVoices[vocal] = picked;
+  return picked;
 }
 
 function speakLine(
@@ -518,7 +571,8 @@ export function warmSpeechVoices(): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
   window.speechSynthesis.getVoices();
   window.speechSynthesis.onvoiceschanged = () => {
-    cachedVoice = undefined;
+    cachedVoices.male = undefined;
+    cachedVoices.female = undefined;
     window.speechSynthesis.getVoices();
   };
 }

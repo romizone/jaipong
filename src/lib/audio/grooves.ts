@@ -9,7 +9,11 @@ import type { DrumName } from "@/lib/audio/drums";
 import type { Groove } from "@/lib/types";
 
 export type Pattern = {
-  /** Jumlah langkah per birama. 16 = not seperenambelas pada birama 4/4. */
+  /**
+   * Jumlah langkah per birama. 16 = not seperenambelas pada birama 4/4;
+   * waltz memakai 12 langkah pada birama 3/4 — sama-sama seperenambelas,
+   * karena ukuran biramanya ikut menyesuaikan (lihat beatsPerBar di types.ts).
+   */
   steps: number;
   voices: Partial<Record<DrumName, number[]>>;
   /** Ayunan 0–1; 0.5 berarti lurus, 0.62 terasa berayun. */
@@ -121,12 +125,17 @@ export const GROOVE_PATTERNS: Record<Groove, Pattern> = {
     },
   },
 
+  /**
+   * Hi-hat sengaja ditulis di seperdelapan, bukan "x..x" di seperenambelas:
+   * ayunannya datang dari "swing" di bawah, jadi jaraknya benar-benar rasa
+   * triplet — bukan dibulatkan ke kisi seperenambelas.
+   */
   shuffle: {
     steps: 16,
     voices: {
       kick: p("X... .... X... ...."),
       snare: p(".... X... .... X..."),
-      hat: p("x..x x..x x..x x..x"),
+      hat: p("x.x. x.x. x.x. x.x."),
     },
     swing: 0.64,
   },
@@ -160,12 +169,13 @@ export const GROOVE_PATTERNS: Record<Groove, Pattern> = {
     },
   },
 
+  /** Waltz 3/4: bas di ketukan 1, snare di 2 dan 3, hi-hat seperdelapan. */
   waltz: {
     steps: 12,
     voices: {
       kick: p("X... .... ...."),
       snare: p(".... o... o..."),
-      hat: p("o..o ..o. .o.."),
+      hat: p("o.o. o.o. o.o."),
     },
   },
 
@@ -238,13 +248,21 @@ export const KENDANG_FILL: Partial<Record<DrumName, number[]>> = {
   kendangDung: p(".... .... ...X ...X"),
 };
 
+/** Isian 3/4, sepanjang 12 langkah supaya tidak meluber keluar birama. */
+export const WALTZ_FILL: Partial<Record<DrumName, number[]>> = {
+  snare: p(".... x-x- x-x-"),
+  tomLow: p(".... .... ..X."),
+  kick: p("X... .... ...."),
+};
+
 export function patternFor(groove: Groove): Pattern {
   return GROOVE_PATTERNS[groove] ?? GROOVE_PATTERNS.pop;
 }
 
 /** Genre Nusantara memakai isian kendang, sisanya isian drum biasa. */
 export function fillFor(groove: Groove): Partial<Record<DrumName, number[]>> {
-  return groove === "jaipong" || groove === "dangdut" || groove === "gamelan"
-    ? KENDANG_FILL
-    : FILL;
+  if (groove === "jaipong" || groove === "dangdut" || groove === "gamelan") {
+    return KENDANG_FILL;
+  }
+  return groove === "waltz" ? WALTZ_FILL : FILL;
 }

@@ -8,6 +8,7 @@ import {
   LEAD_VOICES,
   MODES,
   SECTION_TYPES,
+  beatsPerBar,
   type ArpVoice,
   type BassVoice,
   type ChordVoice,
@@ -22,7 +23,8 @@ import {
   type VocalType,
 } from "@/lib/types";
 
-export const BEATS_PER_BAR = 4;
+/** Ketukan per birama untuk groove yang paling lazim. Waltz memakai 3. */
+export const DEFAULT_BEATS_PER_BAR = 4;
 
 /* ------------------------------------------------------- ambil JSON-nya --- */
 
@@ -89,8 +91,12 @@ function repairTruncated(text: string): string | null {
 
   if (!stack.length) return null;
 
+  // Jangan menutup string di sini. Kalau body dipotong mundur ke lastComplete,
+  // string yang menggantung ikut terbuang — menambahkan kutip justru membuat
+  // JSON-nya rusak persis di kasus paling sering: model kehabisan token di
+  // tengah lirik. Lintasan di bawah menghitung ulang keadaan string pada body
+  // yang benar-benar dipakai, termasuk kutip penutup kalau memang perlu.
   let body = lastComplete > 0 ? text.slice(0, lastComplete + 1) : text;
-  if (inString) body += '"';
   body = body.replace(/,\s*$/, "");
 
   // Hitung ulang tumpukan pada potongan yang dipakai, lalu tutup terbalik.
@@ -143,9 +149,14 @@ function pick<T extends string>(
   return (allowed as readonly string[]).includes(text) ? (text as T) : fallback;
 }
 
-/** Bulatkan ke kelipatan 1/16 ketukan supaya ritme tetap rapi. */
+/** Bulatkan ke not seperenambelas (seperempat ketukan) supaya ritme tetap rapi. */
 function quantize(beats: number): number {
   return Math.round(beats * 4) / 4;
+}
+
+/** Sama, tapi selalu ke bawah — dipakai saat hasilnya tidak boleh melebihi jatah. */
+function quantizeDown(beats: number): number {
+  return Math.floor(beats * 4) / 4;
 }
 
 /**
@@ -192,6 +203,20 @@ export function syllables(word: string): string[] {
   return out.filter(Boolean);
 }
 
+/**
+ * Rapatkan daftar suku kata sampai muat dalam jumlah nada yang tersedia.
+ * Suku kata digabung, bukan dibuang, jadi liriknya tetap utuh saat dinyanyikan.
+ */
+function fitSyllables(parts: string[], max: number): string[] {
+  if (parts.length <= max) return parts;
+  const out: string[] = [];
+  const per = parts.length / max;
+  for (let i = 0; i < max; i += 1) {
+    out.push(parts.slice(Math.round(i * per), Math.round((i + 1) * per)).join(""));
+  }
+  return out.filter(Boolean);
+}
+
 function lineSyllables(text: string): string[] {
   return text
     .split(/\s+/)
@@ -203,6 +228,13 @@ function lineSyllables(text: string): string[] {
 }
 
 /* -------------------------------------------------------- normalisasi ---- */
+
+/** Satu suku kata, dijepit panjangnya — ini ikut dibaca SpeechSynthesis. */
+function syllableOf(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().slice(0, 24);
+  return text || undefined;
+}
 
 function normalizeNotes(raw: unknown, sectionBeats: number): Note[] {
   if (!Array.isArray(raw)) return [];
@@ -227,7 +259,7 @@ function normalizeNotes(raw: unknown, sectionBeats: number): Note[] {
         d: clamp(Math.round(degree), -12, 21),
         t,
         l: trimmed,
-        s: typeof n.s === "string" ? n.s.trim() : undefined,
+        s: syllableOf(n.s),
       });
       continue;
     }
@@ -236,7 +268,7 @@ function normalizeNotes(raw: unknown, sectionBeats: number): Note[] {
       d: clamp(Math.round(degree), -12, 21),
       t,
       l,
-      s: typeof n.s === "string" ? n.s.trim() : undefined,
+      s: syllableOf(n.s),
     });
   }
 
@@ -257,20 +289,34 @@ function normalizeNotes(raw: unknown, sectionBeats: number): Note[] {
  * Buat melodi cadangan untuk baris lirik yang tidak diberi nada oleh model.
  * Nada mengikuti nada akor yang sedang berbunyi, jadi selalu masuk kunci.
  */
-function fallbackMelody(
-  text: string,
-  startBeat: number,
-  availableBeats: number,
-  chords: string[],
-  mode: Mode,
-  seed: number,
-): Note[] {
-  const parts = lineSyllables(text);
-  if (!parts.length || availableBeats < 1) return [];
+function fallbackMelody(args: {
+  text: string;
+  startBeat: number;
+  availableBeats: number;
+  sectionBeats: number;
+  barBeats: number;
+  chords: string[];
+  mode: Mode;
+  seed: number;
+}): Note[] {
+  const { text, startBeat, availableBeats, sectionBeats, barBeats, chords, mode, seed } = args;
+  if (availableBeats < 1) return [];
 
   // Sisakan sekitar seperempat waktu di akhir baris untuk bernapas.
   const singBeats = Math.max(1, availableBeats * 0.78);
-  const step = quantize(Math.max(0.25, singBeats / parts.length));
+
+  // Satu nada tidak boleh lebih pendek dari seperempat ketukan, jadi baris yang
+  // terlalu panjang untuk jatahnya dirapatkan suku katanya. Tanpa ini nadanya
+  // meluap ke baris berikutnya — dan bisa melewati akhir bagian, karena melodi
+  // cadangan dibuat setelah normalizeNotes memangkas tumpang tindih.
+  const parts = fitSyllables(
+    lineSyllables(text),
+    Math.max(1, Math.floor(singBeats / 0.25)),
+  );
+  if (!parts.length) return [];
+
+  // Dibulatkan ke bawah supaya parts.length * step tidak pernah melewati jatah.
+  const step = Math.max(0.25, quantizeDown(singBeats / parts.length));
 
   // Cari derajat tangga nada yang paling dekat dengan tiap nada akor.
   const degreeFor = (semitone: number): number => {
@@ -294,7 +340,9 @@ function fallbackMelody(
 
   parts.forEach((syllable, index) => {
     const t = quantize(startBeat + index * step);
-    const bar = Math.floor(t / BEATS_PER_BAR) % Math.max(1, chords.length);
+    // Pagar terakhir: apa pun yang terjadi, jangan menulis nada di luar bagian.
+    if (t + step > sectionBeats + 0.001) return;
+    const bar = Math.floor(t / barBeats) % Math.max(1, chords.length);
     const chord = parseChord(chords[bar] ?? chords[0] ?? "C");
     const tone = chord ? chord.intervals[index % chord.intervals.length]! : 0;
     const base = chord ? degreeFor((chord.root + tone) % 12) : 1;
@@ -313,6 +361,7 @@ function fallbackMelody(
 function normalizeLines(
   raw: unknown,
   sectionBeats: number,
+  barBeats: number,
   chords: string[],
   mode: Mode,
   index: number,
@@ -357,14 +406,16 @@ function normalizeLines(
 
     if (slot >= 1) {
       needsMelody.forEach((line, i) => {
-        line.notes = fallbackMelody(
-          line.text,
-          busyUntil + i * slot,
-          slot,
+        line.notes = fallbackMelody({
+          text: line.text,
+          startBeat: busyUntil + i * slot,
+          availableBeats: slot,
+          sectionBeats,
+          barBeats,
           chords,
           mode,
-          index + i,
-        );
+          seed: index + i,
+        });
       });
     } else {
       // Tidak ada ruang tersisa — biarkan liriknya tampil tanpa dinyanyikan.
@@ -396,6 +447,7 @@ function normalizeSection(
   index: number,
   key: string,
   mode: Mode,
+  barBeats: number,
 ): Section | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Record<string, unknown>;
@@ -407,7 +459,8 @@ function normalizeSection(
   const chords = normalizeChords(s.chords, bars, key);
   const lines = normalizeLines(
     s.lines,
-    bars * BEATS_PER_BAR,
+    bars * barBeats,
+    barBeats,
     chords,
     mode,
     index,
@@ -439,13 +492,18 @@ function defaultLabel(type: SectionType, index: number): string {
 
 /* ------------------------------------------------------------ durasi ----- */
 
-export function sectionSeconds(bars: number, bpm: number): number {
-  return (bars * BEATS_PER_BAR * 60) / bpm;
+export function sectionSeconds(
+  bars: number,
+  bpm: number,
+  barBeats: number = DEFAULT_BEATS_PER_BAR,
+): number {
+  return (bars * barBeats * 60) / bpm;
 }
 
-export function songSeconds(song: Pick<Song, "sections" | "bpm">): number {
+export function songSeconds(song: Pick<Song, "sections" | "bpm" | "groove">): number {
+  const barBeats = beatsPerBar(song.groove);
   return song.sections.reduce(
-    (total, s) => total + sectionSeconds(s.bars, song.bpm),
+    (total, s) => total + sectionSeconds(s.bars, song.bpm, barBeats),
     0,
   );
 }
@@ -455,10 +513,15 @@ export function songSeconds(song: Pick<Song, "sections" | "bpm">): number {
  * bertindak kalau melesetnya besar: reff diulang kalau kependekan, bagian
  * tengah dibuang kalau kepanjangan.
  */
-function fitDuration(sections: Section[], bpm: number, target: number): Section[] {
+function fitDuration(
+  sections: Section[],
+  bpm: number,
+  target: number,
+  barBeats: number,
+): Section[] {
   const result = [...sections];
   const total = () =>
-    result.reduce((n, s) => n + sectionSeconds(s.bars, bpm), 0);
+    result.reduce((n, s) => n + sectionSeconds(s.bars, bpm, barBeats), 0);
 
   let guard = 0;
   while (
@@ -520,15 +583,19 @@ export function normalizeSong(raw: unknown, options: NormalizeOptions): Song | n
   const key = normalizeKey(r.key);
   const mode = pick<Mode>(r.mode, MODES, "minor");
   const bpm = Math.round(clamp(numberOr(r.bpm, 100), 50, 200));
+  // Groove menentukan ukuran birama, jadi harus diputuskan sebelum bagiannya
+  // dinormalkan: waltz 3 ketukan per birama, sisanya 4.
+  const groove = pick<Groove>(r.groove, GROOVES, "pop");
+  const barBeats = beatsPerBar(groove);
 
   let sections = rawSections
     .slice(0, LIMITS.maxSections)
-    .map((s, i) => normalizeSection(s, i, key, mode))
+    .map((s, i) => normalizeSection(s, i, key, mode, barBeats))
     .filter((s): s is Section => s !== null);
 
   if (!sections.length) return null;
 
-  sections = fitDuration(sections, bpm, options.targetDuration);
+  sections = fitDuration(sections, bpm, options.targetDuration, barBeats);
 
   // Pagar terakhir: batasi jumlah nada seluruh lagu.
   let budget = LIMITS.maxNotesPerSong;
@@ -570,7 +637,7 @@ export function normalizeSong(raw: unknown, options: NormalizeOptions): Song | n
     bpm,
     key,
     mode,
-    groove: pick<Groove>(r.groove, GROOVES, "pop"),
+    groove,
     vocal,
     instruments: {
       lead: pick<LeadVoice>(

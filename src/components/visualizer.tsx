@@ -23,16 +23,32 @@ export function Visualizer({ getAnalyser, active, className }: Props) {
     let data: Uint8Array<ArrayBuffer> | null = null;
     // Nilai yang meluruh pelan supaya batang tidak berkedip kasar.
     let smoothed: Float32Array | null = null;
+    // Berapa frame berturut-turut tidak ada yang bergerak lagi.
+    let settled = 0;
+
+    // Gradien dikelompokkan per tinggi batang (dibulatkan 4 piksel). Tanpa ini
+    // ada 56 objek gradien baru tiap frame — 3.000-an per detik, terus-menerus.
+    let gradients = new Map<number, CanvasGradient>();
+
+    const gradientFor = (height: number, barHeight: number): CanvasGradient => {
+      const bucket = Math.max(4, Math.round(barHeight / 4) * 4);
+      const cached = gradients.get(bucket);
+      if (cached) return cached;
+      const made = ctx.createLinearGradient(0, height, 0, height - bucket);
+      made.addColorStop(0, "rgba(220, 79, 125, 0.55)");
+      made.addColorStop(1, "rgba(245, 199, 119, 0.95)");
+      gradients.set(bucket, made);
+      return made;
+    };
 
     const draw = () => {
-      frame = requestAnimationFrame(draw);
-
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       const ratio = Math.min(2, window.devicePixelRatio || 1);
       if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
         canvas.width = width * ratio;
         canvas.height = height * ratio;
+        gradients = new Map();
       }
 
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -69,19 +85,27 @@ export function Visualizer({ getAnalyser, active, className }: Props) {
         const x = i * (barWidth + gap);
         const y = height - barHeight;
 
-        const gradient = ctx.createLinearGradient(0, height, 0, y);
-        gradient.addColorStop(0, "rgba(220, 79, 125, 0.55)");
-        gradient.addColorStop(1, "rgba(245, 199, 119, 0.95)");
-        ctx.fillStyle = gradient;
-
+        ctx.fillStyle = gradientFor(height, barHeight);
         ctx.beginPath();
         ctx.roundRect(x, y, barWidth, barHeight, barWidth / 2);
         ctx.fill();
       }
+
+      // Kalau tidak ada lagu berjalan dan batangnya sudah rata di dasar,
+      // tidak ada gunanya menggambar 60 kali per detik. Effect dijalankan
+      // ulang saat "active" berubah, jadi gerakannya kembali dengan sendirinya.
+      settled = analyser ? 0 : settled + 1;
+      if (settled > 45) {
+        frame = 0;
+        return;
+      }
+      frame = requestAnimationFrame(draw);
     };
 
     frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, [getAnalyser, active]);
 
   return <canvas ref={canvasRef} aria-hidden className={className} />;

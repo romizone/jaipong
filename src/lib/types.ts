@@ -47,6 +47,15 @@ export const GROOVES = [
 ] as const;
 export type Groove = (typeof GROOVES)[number];
 
+/**
+ * Ketukan per birama. Hampir semua groove di sini 4/4; waltz satu-satunya
+ * yang 3/4. Nilainya diturunkan dari groove, bukan disimpan di lagu, jadi
+ * lagu lama di localStorage tetap terbaca tanpa migrasi.
+ */
+export function beatsPerBar(groove: Groove): number {
+  return groove === "waltz" ? 3 : 4;
+}
+
 /** Suara melodi utama. */
 export const LEAD_VOICES = [
   "none",
@@ -173,8 +182,7 @@ export type Song = {
 /** Permintaan dari formulir di browser. */
 export type ComposeRequest = {
   prompt: string;
-  /** Mode mandiri: pengguna menulis sendiri lirik dan gaya. */
-  custom?: boolean;
+  /** Mode mandiri: judul dan lirik diisi sendiri oleh pengguna. */
   title?: string;
   lyrics?: string;
   styleTags?: string;

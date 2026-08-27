@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import type { SectionMark } from "@/lib/audio/timeline";
+import { useEffect, useMemo, useRef } from "react";
+import type { LineMark, SectionMark } from "@/lib/audio/timeline";
 import { formatTime } from "@/components/player-bar";
 
 type Props = {
@@ -16,14 +16,36 @@ export function LyricsPanel({ sections, position, playing, onSeek }: Props) {
   const activeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const flat = sections.flatMap((section) =>
-    section.lines.map((line) => ({ section, line })),
-  );
-  const activeIndex = flat.findIndex(
-    ({ line }, index) =>
-      position >= line.start - 0.25 &&
-      (index === flat.length - 1 || position < flat[index + 1]!.line.start - 0.25),
-  );
+  // Daftar rata beserta petanya dihitung sekali per lagu. Sebelumnya tiap
+  // baris mencari posisinya sendiri dengan findIndex di dalam map — O(n²)
+  // yang diulang tiap 120 milidetik, seiring posisi lagu berjalan.
+  const { flat, indexOf } = useMemo(() => {
+    const rows: Array<{ section: SectionMark; line: LineMark }> = [];
+    const map = new Map<LineMark, number>();
+    for (const section of sections) {
+      for (const line of section.lines) {
+        map.set(line, rows.length);
+        rows.push({ section, line });
+      }
+    }
+    return { flat: rows, indexOf: map };
+  }, [sections]);
+
+  // Baris yang sedang berbunyi = baris terakhir yang sudah dimulai. Dicari
+  // lewat awal terbesar, bukan lewat baris sesudahnya, supaya tetap benar
+  // kalau urutan barisnya tidak persis menaik.
+  const activeIndex = useMemo(() => {
+    let best = -1;
+    let bestStart = -Infinity;
+    for (let i = 0; i < flat.length; i += 1) {
+      const start = flat[i]!.line.start;
+      if (start <= position + 0.25 && start >= bestStart) {
+        bestStart = start;
+        best = i;
+      }
+    }
+    return best;
+  }, [flat, position]);
 
   useEffect(() => {
     if (!playing) return;
@@ -71,10 +93,7 @@ export function LyricsPanel({ sections, position, playing, onSeek }: Props) {
             {section.lines
               .filter((line) => line.text.trim())
               .map((line, index) => {
-                const flatIndex = flat.findIndex(
-                  (item) => item.line === line && item.section === section,
-                );
-                const active = flatIndex === activeIndex;
+                const active = indexOf.get(line) === activeIndex;
                 return (
                   <button
                     key={`${section.id}-${index}`}

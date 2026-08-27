@@ -64,13 +64,26 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Ambil IP klien dari header proxy (Vercel selalu mengisi x-forwarded-for). */
+/**
+ * Ambil IP klien dari header proxy.
+ *
+ * Urutannya penting. Isi paling kiri x-forwarded-for berasal dari klien, jadi
+ * siapa pun bisa mengarangnya dan mendapat kuota baru tiap permintaan.
+ * x-real-ip dan cf-connecting-ip diisi platform di depan aplikasi dan menimpa
+ * apa pun yang dikirim klien, jadi keduanya didahulukan; x-forwarded-for hanya
+ * dipakai kalau tidak ada pilihan lain.
+ */
 export function clientIp(req: Request): string {
+  const real = req.headers.get("x-real-ip")?.trim();
+  if (real) return real;
+
+  const cloudflare = req.headers.get("cf-connecting-ip")?.trim();
+  if (cloudflare) return cloudflare;
+
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]!.trim();
-  return (
-    req.headers.get("x-real-ip") ?? req.headers.get("cf-connecting-ip") ?? "anon"
-  );
+
+  return "anon";
 }
 
 async function check(

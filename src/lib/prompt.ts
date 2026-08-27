@@ -33,7 +33,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
   "groove": string,                 // ${list(GROOVES)}
   "vocal": "male" | "female" | "none",
   "instruments": {
-    "lead":   string,               // ${list(LEAD_VOICES)}
+    "lead":   string,               // ${list(LEAD_VOICES)} — dipakai untuk bagian tanpa lirik (intro, solo, isian); melodi berlirik selalu dinyanyikan
     "chords": string,               // ${list(CHORD_VOICES)}
     "bass":   string,               // ${list(BASS_VOICES)}
     "arp":    string                // ${list(ARP_VOICES)}
@@ -43,7 +43,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
       "id": string,                 // unik, mis. "verse1"
       "type": string,               // ${list(SECTION_TYPES)}
       "label": string,              // tampil ke pengguna, mis. "Verse 1", "Reff"
-      "bars": number,               // 2-16 birama (4 ketukan per birama)
+      "bars": number,               // 2-16 birama
       "energy": number,             // 0.2 sepi ... 1.0 paling megah
       "chords": string[],           // TEPAT satu simbol akor per birama
       "lines": [                    // baris lirik + melodinya; [] untuk bagian instrumental
@@ -59,7 +59,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
 ## Aturan nada
 
 - "d" = derajat tangga nada, BUKAN nomor MIDI. 1 = nada dasar, 2 = nada kedua, ... 8 = nada dasar satu oktaf di atas, 0 dan negatif turun ke bawah. Pakai rentang -3 sampai 15. Melodi vokal yang nyaman umumnya berada di 1-10.
-- "t" = ketukan mulai, dihitung dari awal BAGIAN itu (bukan awal lagu). Bagian dengan 8 birama punya ketukan 0 sampai 31.999.
+- "t" = ketukan mulai, dihitung dari awal BAGIAN itu (bukan awal lagu). Satu birama = 4 ketukan, kecuali groove "waltz" yang 3 ketukan per birama. Jadi bagian dengan 8 birama punya ketukan 0 sampai 31.999 (atau 0 sampai 23.999 kalau waltz).
 - "l" = panjang nada dalam ketukan. Pakai 0.25, 0.5, 0.75, 1, 1.5, 2, 3, atau 4.
 - Nada tidak boleh saling tumpang tindih di dalam satu baris, dan tidak boleh melewati akhir bagian.
 - "s" = satu suku kata yang dinyanyikan pada nada itu. Pecah kata sesuai suku katanya: "senja" -> "sen" + "ja", "menghilang" -> "meng" + "hi" + "lang". Gabungan seluruh "s" dalam satu baris harus membentuk teks baris tersebut. Satu suku kata boleh dibawa dua nada (melisma) — tulis suku kata yang sama dua kali.
@@ -68,7 +68,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
 ## Aturan musik
 
 - Akor harus cocok dengan "key" dan "mode". Pakai simbol standar: C, Am, F, G7, Dm7, Cmaj7, Esus4, Bdim, Am/G, G6, Fadd9, C9, Am11.
-- Nada pada ketukan kuat (0, 1, 2, 3 di tiap birama) sebaiknya nada akor. Nada di antaranya bebas sebagai nada lintas.
+- Nada pada ketukan penuh (0, 1, 2, ... di tiap birama) sebaiknya nada akor. Nada di antaranya bebas sebagai nada lintas.
 - Melodi harus punya motif: satu ide ritmis-melodis yang diulang dan divariasikan. Jangan menaburkan nada acak.
 - Reff harus terdengar lebih tinggi dan lebih terbuka dari verse — naikkan rentang nada dan naikkan "energy".
 - Bagian dengan label sama (Verse 1 & Verse 2, Reff 1 & Reff 2) memakai melodi yang sama persis dengan lirik berbeda; sesuaikan hanya kalau jumlah suku katanya beda.
@@ -77,7 +77,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
 ## Struktur dan durasi
 
 - Susunan lazim: intro -> verse -> prechorus -> chorus -> verse -> chorus -> bridge -> chorus -> outro. Sesuaikan dengan genre dan durasi.
-- Durasi satu bagian = bars * 4 * 60 / bpm detik. Total seluruh bagian HARUS mendekati durasi target yang diminta (selisih maksimal 15 detik). Hitung dulu sebelum menulis.
+- Durasi satu bagian = bars * ketukan_per_birama * 60 / bpm detik (ketukan_per_birama = 4, atau 3 kalau groove "waltz"). Total seluruh bagian HARUS mendekati durasi target yang diminta (selisih maksimal 15 detik). Hitung dulu sebelum menulis.
 - Lagu pendek (30-60 detik): 3-5 bagian. Lagu penuh (150-240 detik): 8-11 bagian.
 
 ## Aturan lirik
@@ -98,6 +98,7 @@ Balas HANYA dengan satu objek JSON. Tanpa penjelasan, tanpa pagar kode markdown,
 - Jaipong/Sunda: groove "jaipong", mode "pelog" atau "slendro", lead "suling", chords "gamelan", arp "gamelan", bpm 100-140.
 - Keroncong: groove "keroncong", bpm 100-120, chords "guitar_nylon", bass "upright", lead "flute" atau "violin".
 - Gamelan/ambient tradisional: groove "gamelan", mode "pelog" atau "slendro", chords "gamelan", vocal boleh "none".
+- Waltz: groove "waltz" — birama 3/4, jadi tiap birama hanya 3 ketukan. bpm 90-160, chords "strings" atau "piano".
 
 Sebelum menulis, tentukan dulu: bpm, nada dasar, jumlah birama total supaya durasinya pas, lalu motif reff. Baru tulis JSON-nya.`;
 

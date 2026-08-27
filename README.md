@@ -79,6 +79,7 @@ src/
     api/compose/route.ts   Alirkan penyusunan lagu (SSE): status, judul, lirik, partitur
     api/health/route.ts    Cek konfigurasi tanpa membocorkan kunci
     page.tsx layout.tsx    Halaman studio
+    error.tsx              Jaring pengaman kalau halaman gagal dirender
   lib/
     config.ts              Semua env var, hanya sisi server
     openrouter.ts          Klien OpenRouter + terjemahan pesan kesalahan
@@ -109,6 +110,17 @@ menjadwalkan sekitar 1,4 detik ke depan setiap 120 milidetik.
 
 **Puncak dijaga.** Bus melewati kompresor lalu pembatas berbentuk kurva tanh,
 jadi campuran seramai apa pun tidak pernah melewati 0 dBFS.
+
+**Ukuran birama ikut groove.** Hampir semuanya 4/4; `waltz` 3/4. Angkanya
+diturunkan dari groove (`beatsPerBar` di `src/lib/types.ts`), bukan disimpan
+di lagu, jadi lagu lama di localStorage tetap terbaca.
+
+**Dawai dihitung sendiri.** Petikan gitar, harpa, dan arpeggio memakai
+Karplus-Strong yang dihitung langsung ke dalam buffer. Cara yang lebih
+ringkas — `DelayNode` berumpan balik dengan `delayTime = 1/freq` — tidak bisa
+dipakai: Web Audio menjepit delay di dalam siklus ke satu render quantum
+(sekitar 2,9 ms), jadi semua nada di atas ~345 Hz akan keluar dengan tinggi
+nada yang sama.
 
 **Vokal ada dua lapis.** Melodi dibawakan synth formant (tiga filter bandpass
 mengikuti vokal a/i/u/e/o dari suku katanya) — lapisan inilah yang ikut terekam

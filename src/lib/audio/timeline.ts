@@ -16,9 +16,8 @@ import {
   voiceChord,
   type Chord,
 } from "@/lib/audio/theory";
+import { beatsPerBar } from "@/lib/types";
 import type { Song } from "@/lib/types";
-
-export const BEATS_PER_BAR = 4;
 
 export type Bus = "lead" | "chords" | "bass" | "arp" | "drums";
 
@@ -105,7 +104,24 @@ const MIX: Record<Bus, number> = {
   drums: 0.7,
 };
 
+/**
+ * Timeline yang sudah pernah dihitung, disimpan per objek lagu.
+ *
+ * Satu lagu dibangun beberapa kali dalam satu putaran — panel lirik, pemutar,
+ * dan perender WAV masing-masing memintanya. Lagu tidak pernah diubah setelah
+ * dibuat, jadi identitas objeknya cukup jadi kunci.
+ */
+const timelineCache = new WeakMap<Song, Timeline>();
+
 export function buildTimeline(song: Song): Timeline {
+  const cached = timelineCache.get(song);
+  if (cached) return cached;
+  const built = computeTimeline(song);
+  timelineCache.set(song, built);
+  return built;
+}
+
+function computeTimeline(song: Song): Timeline {
   const events: AudioEvent[] = [];
   const sections: SectionMark[] = [];
 
@@ -114,18 +130,25 @@ export function buildTimeline(song: Song): Timeline {
   const fill = fillFor(song.groove);
   const swing = pattern.swing ?? 0.5;
 
-  const leadVoice = song.vocal === "none" ? song.instruments.lead : "vocal";
-  const leadShift = OCTAVE_SHIFT[leadVoice] ?? 0;
-  const melodyRoot =
-    rootMidiFor(song.key, song.vocal === "male" ? 48 : 60) + leadShift;
+  // Lagu bervokal tetap dinyanyikan suara formant, tapi nada tanpa suku kata —
+  // intro, solo, isian antar-baris — dibawakan instrumen "lead" pilihan model.
+  // Tanpa ini, suling yang diminta untuk jaipong tidak pernah kedengaran.
+  const singVoice = song.vocal === "none" ? song.instruments.lead : "vocal";
+  const playVoice = song.instruments.lead === "none" ? singVoice : song.instruments.lead;
 
+  const rootFor = (name: string) =>
+    rootMidiFor(song.key, song.vocal === "male" ? 48 : 60) + (OCTAVE_SHIFT[name] ?? 0);
+  const singRoot = rootFor(singVoice);
+  const playRoot = rootFor(playVoice);
+
+  const barBeats = beatsPerBar(song.groove);
   let barCursor = 0;
   let timeCursor = 0;
   let previousTop: number | undefined;
 
   for (const section of song.sections) {
     const sectionStart = timeCursor;
-    const sectionBeats = section.bars * BEATS_PER_BAR;
+    const sectionBeats = section.bars * barBeats;
     const energy = section.energy;
     const marks: LineMark[] = [];
 
@@ -146,12 +169,14 @@ export function buildTimeline(song: Song): Timeline {
       for (const note of line.notes) {
         const t = sectionStart + note.t * beat;
         const dur = note.l * beat;
-        const midi = degreeToMidi(note.d, song.mode, melodyRoot);
+        const sung = Boolean(note.s);
+        const voice = sung ? singVoice : playVoice;
+        const midi = degreeToMidi(note.d, song.mode, sung ? singRoot : playRoot);
 
         events.push({
           kind: "note",
           bus: "lead",
-          voice: leadVoice,
+          voice,
           t,
           dur: Math.max(0.08, dur * 0.94),
           freq: midiToFreq(midi),
@@ -181,7 +206,7 @@ export function buildTimeline(song: Song): Timeline {
     const chordCenter = rootMidiFor(song.key, 60);
 
     for (let bar = 0; bar < section.bars; bar += 1) {
-      const barTime = sectionStart + bar * BEATS_PER_BAR * beat;
+      const barTime = sectionStart + bar * barBeats * beat;
       const chord = parseChord(section.chords[bar] ?? section.chords[0] ?? song.key);
       if (!chord) continue;
 
@@ -196,6 +221,7 @@ export function buildTimeline(song: Song): Timeline {
           voice: song.instruments.chords,
           barTime,
           beat,
+          barBeats,
           energy,
           sustained,
           groove: song.groove,
@@ -212,6 +238,7 @@ export function buildTimeline(song: Song): Timeline {
           energy,
           kick: pattern.voices.kick,
           steps: pattern.steps,
+          barBeats,
           swing,
         });
       }
@@ -223,6 +250,7 @@ export function buildTimeline(song: Song): Timeline {
           voice: song.instruments.arp,
           barTime,
           beat,
+          barBeats,
           energy,
           bar,
         });
@@ -244,6 +272,7 @@ export function buildTimeline(song: Song): Timeline {
           stepCount: pattern.steps,
           barTime,
           beat,
+          barBeats,
           energy,
           swing,
         });
@@ -260,6 +289,7 @@ export function buildTimeline(song: Song): Timeline {
             stepCount: pattern.steps,
             barTime,
             beat,
+            barBeats,
             energy,
             swing,
           });
@@ -304,26 +334,31 @@ function pushChord(args: {
   voice: string;
   barTime: number;
   beat: number;
+  barBeats: number;
   energy: number;
   sustained: boolean;
   groove: string;
 }): void {
-  const { events, notes, voice, barTime, beat, energy, sustained } = args;
+  const { events, notes, voice, barTime, beat, barBeats, energy, sustained } = args;
 
   // Ritme comping: kapan akor dipukul dalam satu birama (dalam ketukan).
-  const hits: Array<{ at: number; len: number; level: number }> = sustained
-    ? [{ at: 0, len: BEATS_PER_BAR, level: 1 }]
-    : energy >= 0.7
-      ? [
-          { at: 0, len: 0.9, level: 1 },
-          { at: 1.5, len: 0.5, level: 0.6 },
-          { at: 2, len: 0.9, level: 0.85 },
-          { at: 3.5, len: 0.5, level: 0.6 },
-        ]
-      : [
-          { at: 0, len: 1.8, level: 1 },
-          { at: 2, len: 1.8, level: 0.8 },
-        ];
+  // Pukulan yang jatuh di luar birama dibuang, jadi pola 4/4 di bawah tetap
+  // masuk akal saat dipakai birama 3/4.
+  const hits = (
+    sustained
+      ? [{ at: 0, len: barBeats, level: 1 }]
+      : energy >= 0.7
+        ? [
+            { at: 0, len: 0.9, level: 1 },
+            { at: 1.5, len: 0.5, level: 0.6 },
+            { at: 2, len: 0.9, level: 0.85 },
+            { at: 3.5, len: 0.5, level: 0.6 },
+          ]
+        : [
+            { at: 0, len: 1.8, level: 1 },
+            { at: 2, len: 1.8, level: 0.8 },
+          ]
+  ).filter((hit) => hit.at < barBeats);
 
   for (const hit of hits) {
     for (const midi of notes) {
@@ -350,9 +385,10 @@ function pushBass(args: {
   energy: number;
   kick?: number[];
   steps: number;
+  barBeats: number;
   swing: number;
 }): void {
-  const { events, chord, voice, barTime, beat, energy, kick, steps, swing } = args;
+  const { events, chord, voice, barTime, beat, energy, kick, steps, barBeats, swing } = args;
   const root = bassMidi(chord, 2);
   const fifth = root + (chord.intervals.includes(7) ? 7 : 6);
 
@@ -362,7 +398,7 @@ function pushBass(args: {
   if (kick && energy >= 0.35) {
     kick.forEach((level, index) => {
       if (level <= 0) return;
-      const beatPos = stepToBeat(index, steps, swing);
+      const beatPos = stepToBeat(index, steps, barBeats, swing);
       hits.push({
         at: beatPos,
         len: 0.7,
@@ -372,7 +408,11 @@ function pushBass(args: {
   }
 
   if (!hits.length) {
-    hits.push({ at: 0, len: 1.9, midi: root }, { at: 2, len: 1.9, midi: root });
+    const half = barBeats / 2;
+    hits.push(
+      { at: 0, len: half * 0.95, midi: root },
+      { at: half, len: half * 0.95, midi: root },
+    );
   }
 
   for (const hit of hits) {
@@ -395,14 +435,15 @@ function pushArp(args: {
   voice: string;
   barTime: number;
   beat: number;
+  barBeats: number;
   energy: number;
   bar: number;
 }): void {
-  const { events, notes, voice, barTime, beat, energy, bar } = args;
+  const { events, notes, voice, barTime, beat, barBeats, energy, bar } = args;
   if (!notes.length) return;
 
   const density = energy >= 0.75 ? 4 : 2; // per ketukan
-  const total = BEATS_PER_BAR * density;
+  const total = barBeats * density;
   // Naik-turun, digeser tiap birama supaya tidak terdengar berulang kaku.
   const shape = [...notes, ...[...notes].reverse().slice(1, -1)];
 
@@ -421,15 +462,27 @@ function pushArp(args: {
   }
 }
 
-/** Ubah nomor langkah menjadi posisi ketukan, dengan ayunan kalau diminta. */
-function stepToBeat(index: number, steps: number, swing: number): number {
-  const perBeat = steps / BEATS_PER_BAR;
+/**
+ * Ubah nomor langkah menjadi posisi ketukan, dengan ayunan kalau diminta.
+ *
+ * "swing" adalah letak offbeat seperdelapan di dalam ketukan: 0.5 lurus,
+ * 0.667 rasa triplet. Karena "position" sudah dalam satuan ketukan,
+ * geserannya persis (swing - 0.5) — tidak perlu dibagi lagi dengan
+ * kerapatan langkah.
+ */
+function stepToBeat(
+  index: number,
+  steps: number,
+  barBeats: number,
+  swing: number,
+): number {
+  const perBeat = steps / barBeats;
   let position = index / perBeat;
   if (swing > 0.5 && perBeat >= 2) {
-    // Langkah ganjil pada tingkat seperdelapan digeser mundur.
+    // Langkah pada offbeat seperdelapan digeser mundur.
     const eighth = index / (perBeat / 2);
-    if (Math.abs(eighth % 2 - 1) < 0.01) {
-      position += ((swing - 0.5) * 2 * 0.5) / (perBeat / 2);
+    if (Math.abs((eighth % 2) - 1) < 0.01) {
+      position += swing - 0.5;
     }
   }
   return position;
@@ -442,14 +495,18 @@ function pushDrumBar(args: {
   stepCount: number;
   barTime: number;
   beat: number;
+  barBeats: number;
   energy: number;
   swing: number;
 }): void {
-  const { events, drum, steps, stepCount, barTime, beat, energy, swing } = args;
+  const { events, drum, steps, stepCount, barTime, beat, barBeats, energy, swing } = args;
 
   steps.forEach((level, index) => {
-    if (level <= 0) return;
-    const at = stepToBeat(index, stepCount, swing);
+    // Pola isian bisa lebih panjang dari polanya sendiri (mis. isian 16 langkah
+    // pada birama 3/4); kelebihannya dibuang, bukan dibiarkan meluber ke birama
+    // berikutnya.
+    if (level <= 0 || index >= stepCount) return;
+    const at = stepToBeat(index, stepCount, barBeats, swing);
     events.push({
       kind: "drum",
       drum,
