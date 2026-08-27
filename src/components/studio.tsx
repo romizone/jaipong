@@ -8,7 +8,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { AlertTriangle, Disc3, Library, Loader2, Music2 } from "lucide-react";
+import Image from "next/image";
+import { AlertTriangle, Library, Loader2, Music2 } from "lucide-react";
 import { CreatePanel } from "@/components/create-panel";
 import { LyricsPanel } from "@/components/lyrics-panel";
 import { PlayerBar, modeLabel } from "@/components/player-bar";
@@ -245,9 +246,19 @@ export function Studio() {
       <div className="mx-auto max-w-6xl px-4 pb-36 pt-8 sm:px-6 sm:pt-12">
         <header>
           <div className="flex items-center gap-2.5">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-gold to-rose text-night">
-              <Disc3 size={19} aria-hidden />
-            </span>
+            {/*
+              Sudut membulat dan latarnya sudah menyatu di dalam PNG-nya, jadi
+              tidak perlu rounded-xl tambahan — itu justru memotong sudutnya.
+              alt kosong: teks "Jaipong" di sebelahnya sudah menyebut namanya.
+            */}
+            <Image
+              src="/logo-icon.png"
+              alt=""
+              width={72}
+              height={72}
+              priority
+              className="size-9 shrink-0"
+            />
             <div>
               <h1 className="text-xl font-extrabold tracking-tight text-ink">Jaipong</h1>
               <p className="text-[11px] font-medium uppercase tracking-widest text-gold/70">
