@@ -68,7 +68,9 @@ export function Studio() {
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(0.9);
-  const [singing, setSinging] = useState(true);
+  // Pembaca lirik lagu synth lama mati bawaan — nadanya datar, terdengar
+  // seperti membaca puisi di atas musik. Bisa dinyalakan lewat tombol mikrofon.
+  const [singing, setSinging] = useState(false);
   /** Id lagu yang sedang disiapkan berkas unduhannya. */
   const [exportingId, setExportingId] = useState<string | null>(null);
 
@@ -417,6 +419,19 @@ export function Studio() {
     if (current && isTrack(current)) return trackRef.current?.frequencyData ?? null;
     return synthRef.current?.frequencyData ?? null;
   }, [current]);
+
+  /**
+   * Cegah tab tertutup tak sengaja saat lagu sedang dibangkitkan — biaya
+   * model musiknya sudah berjalan, sayang kalau hasilnya hilang.
+   */
+  useEffect(() => {
+    if (!composing) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [composing]);
 
   /** Pintasan gaya aplikasi musik: Spasi putar/jeda, panah geser 5 detik. */
   useEffect(() => {

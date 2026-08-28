@@ -251,8 +251,13 @@ export class SongPlayer {
   private state: PlayerState = "idle";
   private volume = 0.9;
 
-  /** Nyanyian lewat SpeechSynthesis — hanya saat diputar langsung. */
-  private singing = true;
+  /**
+   * Nyanyian lewat SpeechSynthesis — hanya saat diputar langsung, dan kini
+   * mati bawaan: pembaca teks bernada tunggal terdengar seperti orang
+   * berpuisi di atas lagu, bukan menyanyi. Tombol mikrofon menyalakannya
+   * kembali bagi yang mau.
+   */
+  private singing = false;
   private spoken = new Set<number>();
   private lineIndex: Array<{ line: LineMark; id: number }> = [];
   /** Ucapan yang sudah dijadwalkan tapi belum berbunyi; dibatalkan saat berhenti. */

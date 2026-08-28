@@ -95,13 +95,17 @@ const OCTAVE_SHIFT: Record<string, number> = {
 /** Instrumen akor yang dibiarkan mengambang panjang, bukan dipetik ritmis. */
 const SUSTAINED = new Set(["pad", "strings", "choir", "brass", "organ", "gamelan"]);
 
-/** Kekuatan tiap jalur dalam campuran. */
+/**
+ * Kekuatan tiap jalur dalam campuran. Pengukuran tenaga (gain² × durasi)
+ * pada lagu jaipong menunjukkan drum menelan >50% campuran sementara melodi
+ * cuma ~6% — melodi naik dan perkusi turun supaya liriknya terdengar.
+ */
 const MIX: Record<Bus, number> = {
-  lead: 0.82,
-  chords: 0.36,
-  bass: 0.62,
-  arp: 0.26,
-  drums: 0.7,
+  lead: 0.95,
+  chords: 0.34,
+  bass: 0.52,
+  arp: 0.24,
+  drums: 0.55,
 };
 
 /**

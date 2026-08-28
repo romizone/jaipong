@@ -55,8 +55,13 @@ export const LIMITS = {
   burst: num("COMPOSE_BURST_LIMIT", 6),
   burstWindowSec: num("COMPOSE_BURST_WINDOW_SEC", 300),
   daily: num("COMPOSE_DAILY_LIMIT", 40),
-  /** Kuota harian seluruh situs, bukan per IP. */
-  globalDaily: num("COMPOSE_GLOBAL_DAILY_LIMIT", 600),
+  /**
+   * Kuota harian seluruh situs, bukan per IP. Inilah plafon biaya:
+   * tiap lagu memanggil model musik berbayar per lagu (±$0,08), jadi
+   * bawaan 150 berarti paling banyak ±$12 per hari. Naikkan lewat env
+   * kalau situsnya memang ramai.
+   */
+  globalDaily: num("COMPOSE_GLOBAL_DAILY_LIMIT", 150),
 };
 
 /** Opsional: Upstash Redis REST supaya kuota tetap akurat lintas instance serverless. */

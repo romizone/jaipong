@@ -65,9 +65,8 @@ di-prefix `NEXT_PUBLIC_`, jadi nama model dan kunci tidak pernah sampai ke
 browser.
 
 **Biaya.** Model musiknya dibayar per lagu (Lyria 3 Pro ± $0,08/lagu), bukan
-per token. Dengan kuota bawaan (600 lagu global per hari), plafon terburuknya
-sekitar $48/hari — kecilkan `COMPOSE_GLOBAL_DAILY_LIMIT` kalau itu terlalu
-besar.
+per token. Kuota bawaan 150 lagu global per hari menjadikan plafon terburuknya
+sekitar $12/hari — atur lewat `COMPOSE_GLOBAL_DAILY_LIMIT` sesuai anggaran.
 
 Kuota per IP disimpan di memori proses. Di Vercel tiap instance punya memorinya
 sendiri, jadi batasnya bisa lebih longgar dari angka yang tertulis. Isi

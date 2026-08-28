@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     template: "%s · Jaipong",
   },
   description:
-    "Tulis satu kalimat, dapatkan lagu utuh: lirik, melodi, akor, dan aransemen. Langsung diputar di browser dan bisa diunduh sebagai WAV.",
+    "Tulis satu kalimat, dapatkan lagu utuh: lirik ditulis AI, audionya dibangkitkan model musik. Langsung diputar dan bisa diunduh sebagai MP3.",
   applicationName: "Jaipong",
   openGraph: {
     type: "website",
@@ -26,14 +26,14 @@ export const metadata: Metadata = {
     siteName: "Jaipong",
     title: "Jaipong — Bikin Lagu dengan AI",
     description:
-      "Tulis satu kalimat, dapatkan lagu utuh: lirik, melodi, akor, dan aransemen.",
+      "Tulis satu kalimat, dapatkan lagu utuh — dinyanyikan sungguhan oleh model musik.",
     locale: "id_ID",
   },
   twitter: {
     card: "summary_large_image",
     title: "Jaipong — Bikin Lagu dengan AI",
     description:
-      "Tulis satu kalimat, dapatkan lagu utuh: lirik, melodi, akor, dan aransemen.",
+      "Tulis satu kalimat, dapatkan lagu utuh — dinyanyikan sungguhan oleh model musik.",
   },
   robots: { index: true, follow: true },
 };
