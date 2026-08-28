@@ -77,6 +77,57 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 
+::selection {
+  background: rgba(233, 166, 60, 0.3);
+  color: var(--color-ink);
+}
+
+/* Tepi atas-bawah panel lirik memudar, supaya gulungannya terasa dalam. */
+@utility fade-y {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 1.5rem,
+    black calc(100% - 2rem),
+    transparent 100%
+  );
+}
+
+/* Ekualiser mungil pada kartu lagu yang sedang berbunyi. */
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq 0.9s ease-in-out infinite;
+}
+.eq-bar:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.eq-bar:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* Kilau berjalan pada bilah proses saat lagu disusun. */
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+.animate-shimmer {
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
 /* Denyut halus saat lagu sedang disusun. */
 @keyframes breathe {
   0%,
@@ -111,7 +162,9 @@ textarea:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .animate-breathe,
-  .animate-rise {
+  .animate-rise,
+  .animate-shimmer,
+  .eq-bar {
     animation: none;
   }
 }

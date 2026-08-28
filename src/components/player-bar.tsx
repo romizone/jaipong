@@ -60,8 +60,13 @@ export function PlayerBar({
   const progress = duration > 0 ? Math.min(1, position / duration) : 0;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-night/85 backdrop-blur-xl">
-      <div className="relative mx-auto max-w-6xl px-3 pb-3 pt-2 sm:px-5">
+    <div className="fixed inset-x-0 bottom-0 z-30 bg-night/85 backdrop-blur-xl">
+      {/* Garis aksen senada dengan pita header. */}
+      <div
+        aria-hidden
+        className="h-px w-full bg-gradient-to-r from-gold/60 via-rose/40 to-transparent"
+      />
+      <div className="relative mx-auto max-w-6xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-5">
         <Visualizer
           getAnalyser={getAnalyser}
           active={playing}
@@ -98,15 +103,21 @@ export function PlayerBar({
             </div>
 
             <div className="mt-1.5 flex items-center gap-2">
-              <span className="w-9 shrink-0 text-right font-mono text-[11px] text-faint">
+              <span className="w-9 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">
                 {formatTime(position)}
               </span>
 
-              <div className="relative h-1.5 flex-1">
+              <div className="group/progress relative h-1.5 flex-1">
                 <div className="absolute inset-0 rounded-full bg-white/10" />
                 <div
                   className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-gold to-rose"
                   style={{ width: `${progress * 100}%` }}
+                />
+                {/* Titik pegangan, muncul saat bilahnya disorot. */}
+                <div
+                  aria-hidden
+                  className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink opacity-0 shadow-[0_1px_6px_rgba(0,0,0,0.6)] transition group-hover/progress:opacity-100"
+                  style={{ left: `${progress * 100}%` }}
                 />
                 <input
                   type="range"
@@ -120,7 +131,7 @@ export function PlayerBar({
                 />
               </div>
 
-              <span className="w-9 shrink-0 font-mono text-[11px] text-faint">
+              <span className="w-9 shrink-0 font-mono text-[11px] tabular-nums text-faint">
                 {formatTime(duration)}
               </span>
             </div>

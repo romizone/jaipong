@@ -42,6 +42,9 @@ export const viewport: Viewport = {
   themeColor: "#0b0810",
   width: "device-width",
   initialScale: 1,
+  // Supaya env(safe-area-inset-*) terisi dan bilah pemutar tidak tertutup
+  // garis home di iPhone.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

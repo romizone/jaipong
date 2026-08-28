@@ -66,7 +66,7 @@ export function LyricsPanel({ sections, position, playing, onSeek }: Props) {
   return (
     <div
       ref={scrollRef}
-      className="max-h-[52vh] overflow-y-auto rounded-xl2 border border-line bg-surface p-5 sm:p-6"
+      className="fade-y max-h-[52vh] overflow-y-auto rounded-xl2 border border-line bg-surface p-5 pb-8 sm:p-6 sm:pb-9"
     >
       {!hasLyrics && (
         <p className="text-sm text-muted">
@@ -93,17 +93,24 @@ export function LyricsPanel({ sections, position, playing, onSeek }: Props) {
             {section.lines
               .filter((line) => line.text.trim())
               .map((line, index) => {
-                const active = indexOf.get(line) === activeIndex;
+                const lineIndex = indexOf.get(line) ?? -1;
+                const active = lineIndex === activeIndex;
+                // Gaya karaoke tiga tingkat: baris yang sudah lewat meredup,
+                // baris aktif menyala dan sedikit membesar, baris berikutnya
+                // menunggu di tingkat tengah.
+                const sung = activeIndex >= 0 && lineIndex < activeIndex;
                 return (
                   <button
                     key={`${section.id}-${index}`}
                     ref={active ? activeRef : undefined}
                     type="button"
                     onClick={() => onSeek(line.start)}
-                    className={`block w-full text-left text-[15px] leading-relaxed transition ${
+                    className={`block w-full text-left leading-relaxed transition-all duration-300 ${
                       active
-                        ? "font-semibold text-gold-soft"
-                        : "text-muted hover:text-ink"
+                        ? "text-[17px] font-semibold text-gold-soft"
+                        : sung
+                          ? "text-[15px] text-faint hover:text-muted"
+                          : "text-[15px] text-muted hover:text-ink"
                     }`}
                   >
                     {line.text}

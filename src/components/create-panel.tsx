@@ -19,6 +19,13 @@ const PRESETS: Array<{ label: string; tags: string }> = [
   { label: "Sinematik", tags: "sinematik, orkestra, megah, string" },
 ];
 
+/** Contoh sekali klik untuk pengguna yang belum tahu harus menulis apa. */
+const EXAMPLES = [
+  "Jaipong riang tentang hujan pertama di Bandung",
+  "Balada piano sendu tentang rindu rumah",
+  "Dangdut koplo penyemangat kerja pagi",
+];
+
 const DURATIONS = [
   { value: 45, label: "45 dtk" },
   { value: 90, label: "1.5 mnt" },
@@ -69,8 +76,8 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
     });
   }
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
+  function submit(event?: React.FormEvent) {
+    event?.preventDefault();
     if (!canSubmit) return;
     onSubmit({
       prompt: prompt.trim(),
@@ -87,7 +94,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
     <form onSubmit={submit} className="panel rounded-xl2 p-5 sm:p-6">
       <div className="flex items-center gap-2 text-sm font-semibold text-gold">
         <Sparkles size={16} aria-hidden />
-        Bikin lagu
+        Bikin Lagu
       </div>
 
       <label htmlFor="prompt" className="mt-4 block text-sm font-medium text-ink">
@@ -97,11 +104,34 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
         id="prompt"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
+        onKeyDown={(e) => {
+          // Pintasan baku aplikasi tulis: Ctrl/Cmd+Enter langsung membuat.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            submit();
+          }
+        }}
         rows={4}
         maxLength={2000}
         placeholder="Lagu dangdut riang tentang pulang kampung naik kereta malam, ada suling dan kendang."
-        className="mt-2 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-3 text-[15px] leading-relaxed text-ink placeholder:text-faint"
+        className="mt-2 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-3 text-[15px] leading-relaxed text-ink transition placeholder:text-faint focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20"
       />
+
+      {!prompt.trim() && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-faint">Contoh:</span>
+          {EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              onClick={() => setPrompt(example)}
+              className="rounded-full border border-dashed border-line px-2.5 py-1 text-[11px] text-faint transition hover:border-gold/40 hover:text-muted"
+            >
+              {example}
+            </button>
+          ))}
+        </div>
+      )}
 
       <fieldset className="mt-5">
         <legend className="text-sm font-medium text-ink">Gaya musik</legend>
@@ -210,7 +240,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
               onChange={(e) => setTitle(e.target.value)}
               maxLength={90}
               placeholder="Senja di Ciwidey"
-              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint"
+              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink transition placeholder:text-faint focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20"
             />
           </div>
           <div>
@@ -223,7 +253,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
               onChange={(e) => setStyleTags(e.target.value)}
               maxLength={300}
               placeholder="jaipong, kendang, suling, riang"
-              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint"
+              className="mt-1.5 w-full rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 text-sm text-ink transition placeholder:text-faint focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20"
             />
           </div>
           <div>
@@ -237,7 +267,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
               rows={7}
               maxLength={6000}
               placeholder={"[Verse]\nSenja turun di Ciwidey\nKabut tipis di jendela\n\n[Reff]\nPulanglah, pulanglah"}
-              className="mt-1.5 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 font-mono text-[13px] leading-relaxed text-ink placeholder:text-faint"
+              className="mt-1.5 w-full resize-y rounded-xl border border-line bg-night-2/70 px-3.5 py-2.5 font-mono text-[13px] leading-relaxed text-ink transition placeholder:text-faint focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20"
             />
           </div>
         </div>
@@ -247,7 +277,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
         <button
           type="submit"
           disabled={!canSubmit}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gold to-rose px-4 py-3 text-sm font-semibold text-night transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gold to-rose px-4 py-3 text-sm font-semibold text-night shadow-[0_8px_24px_-10px_rgba(233,166,60,0.55)] transition hover:brightness-110 hover:shadow-[0_10px_28px_-10px_rgba(233,166,60,0.7)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
         >
           {busy ? (
             <>
@@ -257,7 +287,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
           ) : (
             <>
               <Music4 size={16} aria-hidden />
-              Buat Lagu
+              Bikin Lagu
             </>
           )}
         </button>
@@ -274,7 +304,10 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
 
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
         Lirik ditulis AI, lalu audionya dibangkitkan model musik. Tulis lagu
-        orisinal — jangan menempelkan lirik milik orang lain.
+        orisinal — jangan menempelkan lirik milik orang lain.{" "}
+        <span className="whitespace-nowrap text-faint/80">
+          Pintasan: Ctrl/⌘ + Enter.
+        </span>
       </p>
     </form>
   );

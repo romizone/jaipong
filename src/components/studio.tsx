@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import Image from "next/image";
-import { AlertTriangle, Library, Loader2, Music2 } from "lucide-react";
+import { AlertTriangle, Library, Loader2 } from "lucide-react";
 import { CreatePanel } from "@/components/create-panel";
 import { LyricsPanel } from "@/components/lyrics-panel";
 import { PlayerBar, modeLabel } from "@/components/player-bar";
@@ -60,6 +60,8 @@ export function Studio() {
 
   const [composing, setComposing] = useState(false);
   const [status, setStatus] = useState("");
+  /** Tahap yang sedang berjalan, untuk indikator langkah di kartu proses. */
+  const [phase, setPhase] = useState<"plan" | "audio">("plan");
   const [draft, setDraft] = useState<Draft>({ title: "", lines: [] });
   const [error, setError] = useState<string | null>(null);
 
@@ -80,11 +82,22 @@ export function Studio() {
   const abortRef = useRef<AbortController | null>(null);
   /** Blob lagu aktif — cadangan kalau IndexedDB tidak bisa dipakai. */
   const blobRef = useRef<{ id: string; blob: Blob } | null>(null);
+  /** Bagian lagu aktif, untuk digulirkan ke pandangan begitu lagunya jadi. */
+  const songSectionRef = useRef<HTMLElement | null>(null);
+  /** Cermin posisi/durasi untuk pintasan keyboard, tanpa memicu render. */
+  const positionRef = useRef(0);
+  const durationRef = useRef(0);
 
   /* ------------------------------------------------------------ setup --- */
 
   useEffect(() => {
-    const callbacks = { onPosition: setPosition, onState: setPlayerState };
+    const callbacks = {
+      onPosition: (seconds: number) => {
+        positionRef.current = seconds;
+        setPosition(seconds);
+      },
+      onState: setPlayerState,
+    };
     const synth = new SongPlayer(callbacks);
     const track = new TrackPlayer(callbacks);
     synthRef.current = synth;
@@ -108,6 +121,10 @@ export function Studio() {
     const timeline = buildTimeline(current);
     return { sections: timeline.sections, duration: timeline.duration };
   }, [current]);
+
+  useEffect(() => {
+    durationRef.current = view?.duration ?? 0;
+  }, [view]);
 
   /* ---------------------------------------------------------- menyusun --- */
 
@@ -138,6 +155,17 @@ export function Studio() {
       setCurrent(track);
       setPosition(0);
       if (player) void player.play(0);
+
+      // Gulirkan bagian lagu ke pandangan supaya lirik berjalannya terlihat —
+      // di ponsel, pengguna masih berada di dekat formulir.
+      setTimeout(() => {
+        songSectionRef.current?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+      }, 120);
     },
     [volume],
   );
@@ -155,6 +183,7 @@ export function Studio() {
       setComposing(true);
       setError(null);
       setDraft({ title: "", lines: [] });
+      setPhase("plan");
       setStatus("Menulis judul dan lirik…");
 
       try {
@@ -180,6 +209,7 @@ export function Studio() {
         if (!plan || controller.signal.aborted) return;
 
         /* Tahap 2: model musik membangkitkan audionya. */
+        setPhase("audio");
         setStatus("Membangkitkan audionya… biasanya sekitar satu menit.");
         const renderRes = await fetch("/api/render", {
           method: "POST",
@@ -388,6 +418,37 @@ export function Studio() {
     return synthRef.current?.frequencyData ?? null;
   }, [current]);
 
+  /** Pintasan gaya aplikasi musik: Spasi putar/jeda, panah geser 5 detik. */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.tagName === "BUTTON" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (!current) return;
+
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggle();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        seek(Math.max(0, positionRef.current - 5));
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        seek(Math.min(durationRef.current, positionRef.current + 5));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [current, toggle, seek]);
+
   /* ------------------------------------------------------------ tampil --- */
 
   return (
@@ -451,7 +512,7 @@ export function Studio() {
           </div>
 
           <div className="space-y-6">
-            {composing && <ComposingCard status={status} draft={draft} />}
+            {composing && <ComposingCard status={status} draft={draft} phase={phase} />}
 
             {error && (
               <div
@@ -471,7 +532,7 @@ export function Studio() {
             )}
 
             {current && view && (
-              <section className="animate-rise">
+              <section ref={songSectionRef} className="animate-rise scroll-mt-6">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-bold tracking-tight text-ink">
                     {current.title}
@@ -505,10 +566,16 @@ export function Studio() {
 
               {library.length === 0 ? (
                 <div className="rounded-xl2 border border-dashed border-line p-8 text-center">
-                  <Music2 size={22} className="mx-auto text-faint" aria-hidden />
+                  <Image
+                    src="/logo-icon.png"
+                    alt=""
+                    width={96}
+                    height={96}
+                    className="mx-auto size-12 opacity-70"
+                  />
                   <p className="mt-3 text-sm text-muted">
                     Belum ada lagu. Tulis idenya di sebelah, lalu tekan{" "}
-                    <span className="text-ink">Buat Lagu</span>.
+                    <span className="font-medium text-ink">Bikin Lagu</span>.
                   </p>
                 </div>
               ) : (
@@ -565,12 +632,60 @@ export function Studio() {
 }
 
 /** Kartu proses: menunjukkan lagu sedang ditulis, bukan sekadar memutar spinner. */
-function ComposingCard({ status, draft }: { status: string; draft: Draft }) {
+function ComposingCard({
+  status,
+  draft,
+  phase,
+}: {
+  status: string;
+  draft: Draft;
+  phase: "plan" | "audio";
+}) {
+  const activeStep = phase === "plan" ? 0 : 1;
+
   return (
-    <div className="animate-rise rounded-xl2 border border-gold/25 bg-gold/6 p-5">
-      <div className="flex items-center gap-2.5 text-sm font-medium text-gold-soft">
-        <Loader2 size={16} className="animate-spin" aria-hidden />
-        {status || "Menyusun lagu…"}
+    <div role="status" className="animate-rise rounded-xl2 border border-gold/25 bg-gold/6 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2.5 text-sm font-medium text-gold-soft">
+          <Loader2 size={16} className="animate-spin" aria-hidden />
+          {status || "Menyusun lagu…"}
+        </div>
+
+        {/* Dua langkah: lirik ditulis dulu, baru audionya dibangkitkan. */}
+        <div className="flex items-center gap-2" aria-hidden>
+          {["Lirik", "Audio"].map((label, index) => (
+            <div key={label} className="flex items-center gap-2">
+              {index > 0 && <span className="h-px w-5 bg-line" />}
+              <span
+                className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider ${
+                  index === activeStep
+                    ? "text-gold-soft"
+                    : index < activeStep
+                      ? "text-muted"
+                      : "text-faint"
+                }`}
+              >
+                <span
+                  className={`flex size-4 items-center justify-center rounded-full text-[9px] ${
+                    index === activeStep
+                      ? "bg-gold text-night"
+                      : index < activeStep
+                        ? "bg-gold/40 text-night"
+                        : "border border-line"
+                  }`}
+                >
+                  {index < activeStep ? "✓" : index + 1}
+                </span>
+                {label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Kilau berjalan: ada kemajuan walau belum ada angka pastinya. */}
+      <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/5">
+        <div className="h-full w-full animate-shimmer bg-gradient-to-r from-transparent via-gold/60 to-transparent" />
       </div>
 
       {draft.title && (

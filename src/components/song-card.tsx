@@ -25,7 +25,7 @@ export function SongCard({
 }: Props) {
   return (
     <article
-      className={`group relative flex items-center gap-3 rounded-xl2 border p-3 transition ${
+      className={`group relative flex items-center gap-3 rounded-xl2 border p-3 transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_28px_-18px_rgba(0,0,0,0.9)] ${
         active
           ? "border-gold/50 bg-gold/8"
           : "border-line bg-surface hover:border-white/18"
@@ -38,7 +38,15 @@ export function SongCard({
         className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-gold/25 to-rose/25 text-ink transition group-hover:from-gold/40 group-hover:to-rose/40"
       >
         {playing ? (
-          <Pause size={18} aria-hidden />
+          <>
+            {/* Ekualiser saat berbunyi; ikon jeda muncul saat kartu disorot. */}
+            <span className="flex items-end gap-[3px] group-hover:hidden" aria-hidden>
+              <span className="eq-bar h-2.5 w-[3px] rounded-full bg-ink" />
+              <span className="eq-bar h-4 w-[3px] rounded-full bg-ink" />
+              <span className="eq-bar h-3 w-[3px] rounded-full bg-ink" />
+            </span>
+            <Pause size={18} className="hidden group-hover:block" aria-hidden />
+          </>
         ) : (
           <Play size={18} className="ml-0.5" aria-hidden />
         )}
@@ -52,7 +60,7 @@ export function SongCard({
           {song.genreLabel}
           {song.styleTags.length > 0 && ` · ${song.styleTags.slice(0, 3).join(", ")}`}
         </p>
-        <p className="mt-0.5 font-mono text-[11px] text-faint">
+        <p className="mt-0.5 font-mono text-[11px] tabular-nums text-faint">
           {formatTime(song.durationSec)}
           {!isTrack(song) && ` · ${song.bpm} BPM`} ·{" "}
           {song.vocal === "none" ? "instrumental" : song.vocal === "male" ? "vokal pria" : "vokal wanita"}
@@ -84,7 +92,7 @@ export function SongCard({
           type="button"
           onClick={onDelete}
           aria-label={`Hapus ${song.title}`}
-          className="rounded-lg p-2 text-faint opacity-0 transition hover:bg-white/5 hover:text-rose focus-visible:opacity-100 group-hover:opacity-100"
+          className="rounded-lg p-2 text-faint transition hover:bg-white/5 hover:text-rose focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
         >
           <Trash2 size={15} aria-hidden />
         </button>
