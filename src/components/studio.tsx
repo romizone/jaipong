@@ -392,37 +392,55 @@ export function Studio() {
 
   return (
     <>
-      <div className="mx-auto max-w-6xl px-4 pb-36 pt-8 sm:px-6 sm:pt-12">
-        <header>
-          <div className="flex items-center gap-2.5">
-            {/*
-              Sudut membulat dan latarnya sudah menyatu di dalam PNG-nya, jadi
-              tidak perlu rounded-xl tambahan — itu justru memotong sudutnya.
-              alt kosong: teks "Jaipong" di sebelahnya sudah menyebut namanya.
-            */}
-            <Image
-              src="/logo-icon.png"
-              alt=""
-              width={72}
-              height={72}
-              priority
-              className="size-9 shrink-0"
-            />
-            <div>
-              <h1 className="text-xl font-extrabold tracking-tight text-ink">Jaipong</h1>
-              <p className="text-[11px] font-medium uppercase tracking-widest text-gold/70">
-                Studio Lagu AI
-              </p>
-            </div>
+      {/*
+        Header selebar layar: pita bermerek dari tepi kiri sampai tepi kanan,
+        ditutup garis aksen emas-mawar. Isinya tetap sejajar dengan kolom
+        halaman — logo dan nama di kiri, tagline mengisi sisi kanan pada
+        layar lebar.
+      */}
+      <header className="w-full border-b border-line bg-night-2/40">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-5 sm:gap-5 sm:px-6 sm:py-7">
+          {/*
+            Sudut membulat dan latarnya sudah menyatu di dalam PNG-nya, jadi
+            tidak perlu rounded-xl tambahan — itu justru memotong sudutnya.
+            alt kosong: teks "Jaipong" di sebelahnya sudah menyebut namanya.
+          */}
+          <Image
+            src="/logo-icon.png"
+            alt=""
+            width={160}
+            height={160}
+            priority
+            className="size-14 shrink-0 sm:size-20"
+          />
+          <div className="min-w-0">
+            <h1 className="text-3xl font-extrabold tracking-tight text-ink sm:text-4xl">
+              Jaipong
+            </h1>
+            <p className="mt-0.5 text-xs font-semibold uppercase tracking-[0.28em] text-gold/80 sm:text-sm">
+              Studio Lagu AI
+            </p>
           </div>
-          <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-muted">
+          <p className="ml-auto hidden max-w-sm text-right text-sm leading-relaxed text-muted lg:block">
             Tulis satu kalimat, dapatkan lagu utuh — lirik ditulis AI, lalu
-            audionya dibangkitkan model musik. Lagunya bisa langsung diputar
-            dan diunduh sebagai berkas MP3.
+            audionya dibangkitkan model musik.
           </p>
-        </header>
+        </div>
+        <div
+          aria-hidden
+          className="h-0.5 w-full bg-gradient-to-r from-gold/70 via-rose/50 to-transparent"
+        />
+      </header>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
+      <div className="mx-auto max-w-6xl px-4 pb-36 pt-6 sm:px-6 sm:pt-8">
+        {/* Di layar sempit tagline tidak muat di pita, jadi tampil di sini. */}
+        <p className="max-w-2xl text-[15px] leading-relaxed text-muted lg:hidden">
+          Tulis satu kalimat, dapatkan lagu utuh — lirik ditulis AI, lalu
+          audionya dibangkitkan model musik. Lagunya bisa langsung diputar dan
+          diunduh sebagai berkas MP3.
+        </p>
+
+        <div className="mt-6 grid gap-6 lg:mt-0 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
           <div className="lg:sticky lg:top-6">
             <CreatePanel busy={composing} onSubmit={compose} onCancel={cancelCompose} />
           </div>
