@@ -440,7 +440,12 @@ export function Studio() {
           diunduh sebagai berkas MP3.
         </p>
 
-        <div className="mt-6 grid gap-6 lg:mt-0 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
+        {/*
+          grid-cols-1 penting: tanpa minmax(0,1fr) eksplisit, lajur tunggal di
+          ponsel melebar mengikuti lebar minimum isinya — baris genre+tag pada
+          kartu pustaka yang nowrap membuat seluruh halaman meluber ke samping.
+        */}
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:mt-0 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
           <div className="lg:sticky lg:top-6">
             <CreatePanel busy={composing} onSubmit={compose} onCancel={cancelCompose} />
           </div>
@@ -507,7 +512,7 @@ export function Studio() {
                   </p>
                 </div>
               ) : (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {library.map((item) => (
                     <SongCard
                       key={item.id}
