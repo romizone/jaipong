@@ -130,33 +130,46 @@ export function Studio() {
 
   /* ---------------------------------------------------------- menyusun --- */
 
-  /** Pasang trek yang baru jadi: simpan, muat ke pemutar, langsung putar. */
+  /**
+   * Pasang trek yang baru jadi: dekode, simpan, langsung putar — dalam urutan
+   * itu. Berkas yang ternyata tidak bisa didekode tidak pernah disimpan, jadi
+   * IndexedDB tidak menimbun audio yang tidak akan pernah masuk pustaka.
+   */
   const adoptTrack = useCallback(
-    async (incoming: Track, blob: Blob) => {
-      blobRef.current = { id: incoming.id, blob };
-      const stored = await putAudio(incoming.id, blob);
+    async (incoming: Track, blob: Blob, signal: AbortSignal) => {
+      const player = trackRef.current;
+      if (!player) return;
+
+      setStatus("Menyiapkan pemutar…");
+      try {
+        await player.load(blob);
+      } catch (caught) {
+        console.error("[jaipong] audio tidak bisa didekode", caught);
+        throw new Error(
+          "Audio yang diterima tidak bisa diputar. Coba buat lagunya sekali lagi.",
+        );
+      }
+      // Pengguna membatalkan (atau memulai lagu lain) selagi audionya didekode:
+      // hasil yang sudah tidak diminta jangan disimpan, apalagi diputar.
+      if (signal.aborted) return;
+
+      const track =
+        player.duration > 0 ? { ...incoming, durationSec: player.duration } : incoming;
+
+      blobRef.current = { id: track.id, blob };
+      const stored = await putAudio(track.id, blob);
       if (!stored) {
         // Tanpa IndexedDB lagunya tetap berbunyi sekarang, hanya tidak bisa
         // diputar lagi setelah halaman ditutup.
         console.warn("[jaipong] IndexedDB tidak tersedia; audio hanya untuk sesi ini");
       }
 
-      let track = incoming;
-      const player = trackRef.current;
-      if (player) {
-        synthRef.current?.stop();
-        setStatus("Menyiapkan pemutar…");
-        await player.load(blob);
-        if (player.duration > 0) {
-          track = { ...incoming, durationSec: player.duration };
-        }
-        player.setVolume(volume);
-      }
-
+      synthRef.current?.stop();
+      player.setVolume(volume);
       saveSong(track);
       setCurrent(track);
       setPosition(0);
-      if (player) void player.play(0);
+      void player.play(0);
 
       // Gulirkan bagian lagu ke pandangan supaya lirik berjalannya terlihat —
       // di ponsel, pengguna masih berada di dekat formulir.
@@ -242,7 +255,11 @@ export function Studio() {
             setStatus(`Menerima audio… ${(received / 1_048_576).toFixed(1)} MB`);
           } else if (event.type === "error") setError(event.message);
           else if (event.type === "track") {
-            await adoptTrack(event.track, new Blob(parts, { type: mime }));
+            await adoptTrack(
+              event.track,
+              new Blob(parts, { type: mime }),
+              controller.signal,
+            );
           }
         }
       } catch (caught) {
@@ -254,9 +271,14 @@ export function Studio() {
           );
         }
       } finally {
-        if (abortRef.current === controller) abortRef.current = null;
-        setComposing(false);
-        setStatus("");
+        // Hanya proses yang masih berlaku yang boleh mematikan indikatornya.
+        // Proses yang sudah dibatalkan lalu digantikan proses baru jangan
+        // sampai memadamkan kartu proses milik penggantinya.
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setComposing(false);
+          setStatus("");
+        }
       }
     },
     [adoptTrack],
@@ -299,7 +321,17 @@ export function Studio() {
         blobRef.current = { id: item.id, blob };
 
         let fixed = item;
-        await track.load(blob);
+        try {
+          await track.load(blob);
+        } catch (caught) {
+          // Tanpa ini kegagalan dekode jadi unhandled rejection: tidak ada
+          // yang terjadi di layar dan pengguna mengira tombolnya rusak.
+          console.error("[jaipong] audio tersimpan tidak bisa didekode", caught);
+          setError(
+            "Audio lagu ini rusak dan tidak bisa diputar. Hapus lalu buat ulang lagunya.",
+          );
+          return;
+        }
         if (track.duration > 0 && Math.abs(track.duration - item.durationSec) > 0.5) {
           fixed = { ...item, durationSec: track.duration };
           saveSong(fixed);

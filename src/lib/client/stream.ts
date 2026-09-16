@@ -25,6 +25,9 @@ export async function* readComposeStream(
         const chunk = buffer.slice(0, index);
         buffer = buffer.slice(index + 2);
         for (const line of chunk.split("\n")) {
+          // Satu potongan bisa memuat beberapa peristiwa; setelah dibatalkan,
+          // sisanya jangan sampai masih mengubah tampilan.
+          if (signal?.aborted) return;
           if (!line.startsWith("data:")) continue;
           try {
             yield JSON.parse(line.slice(5).trim()) as ComposeEvent;

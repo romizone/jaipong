@@ -69,7 +69,8 @@ export function createPlanParser(handlers: {
     end() {
       if (pending.trim()) handleLine(pending);
       const vocalWord = (fields.VOKAL ?? "").toLowerCase();
-      const vocal: VocalType = /pria|male/.test(vocalWord)
+      // Batas kata penting: tanpa \b, "female" ikut cocok dengan "male".
+      const vocal: VocalType = /\b(pria|male|laki)\b/.test(vocalWord)
         ? "male"
         : /instrument|tanpa/.test(vocalWord)
           ? "none"

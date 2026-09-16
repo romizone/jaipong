@@ -94,16 +94,39 @@ export async function* readSse(
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
         if (data === "[DONE]") return;
+        let event: Record<string, unknown>;
         try {
-          yield JSON.parse(data) as Record<string, unknown>;
+          event = JSON.parse(data) as Record<string, unknown>;
         } catch {
           // Potongan JSON yang rusak diabaikan; aliran berikutnya tetap jalan.
+          continue;
         }
+        // Kesalahan yang terjadi setelah aliran dimulai (kredit habis, model
+        // sibuk) datang sebagai event biasa dengan HTTP 200. Tanpa ini ia
+        // lewat diam-diam dan tahapnya berakhir sebagai "rencana kosong"
+        // atau "audio kosong" tanpa sebab yang bisa dipahami pengguna.
+        if (event.error) throw midStreamError(event.error);
+        yield event;
       }
     }
   } finally {
     reader.cancel().catch(() => {});
   }
+}
+
+function midStreamError(failure: unknown): UpstreamError {
+  const detail =
+    failure && typeof failure === "object"
+      ? (failure as { code?: unknown; message?: unknown })
+      : { message: failure };
+  const code = Number(detail.code);
+  const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 502;
+  console.error(
+    "[openrouter] gagal di tengah aliran",
+    status,
+    String(detail.message ?? "").slice(0, 300),
+  );
+  return new UpstreamError(friendlyError(status), status);
 }
 
 /** Ambil potongan teks dari satu event SSE chat completions. */

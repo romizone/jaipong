@@ -123,6 +123,19 @@ export async function POST(req: Request) {
         plan.vocal = vocal;
         if (title) plan.title = title;
 
+        // Model bisa menjawab tanpa format (atau ditahan penyaring isi);
+        // hasilnya rencana kosong. Lebih baik dijelaskan di sini daripada
+        // ditolak /api/render dengan pesan yang tidak menyebut sebabnya.
+        if (!plan.style && !plan.lyricsSheet) {
+          console.error("[compose] rencana kosong dari model");
+          send({
+            type: "error",
+            message:
+              "Model tidak menghasilkan rencana lagu. Coba ubah deskripsinya lalu ulangi.",
+          });
+          return;
+        }
+
         send({ type: "plan", plan });
       } catch (error) {
         const message =
