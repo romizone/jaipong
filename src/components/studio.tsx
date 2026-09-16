@@ -530,8 +530,8 @@ export function Studio() {
             </p>
           </div>
           <p className="ml-auto hidden max-w-sm text-right text-sm leading-relaxed text-muted lg:block">
-            Tulis satu kalimat, dapatkan lagu utuh — lirik ditulis AI, lalu
-            audionya dibangkitkan model musik.
+            Tulis satu kalimat, dapatkan lagu utuh 2,5 menit — lirik ditulis
+            AI, lalu audionya dibangkitkan model musik.
           </p>
         </div>
         <div
@@ -543,9 +543,9 @@ export function Studio() {
       <div className="mx-auto max-w-6xl px-4 pb-36 pt-6 sm:px-6 sm:pt-8">
         {/* Di layar sempit tagline tidak muat di pita, jadi tampil di sini. */}
         <p className="max-w-2xl text-[15px] leading-relaxed text-muted lg:hidden">
-          Tulis satu kalimat, dapatkan lagu utuh — lirik ditulis AI, lalu
-          audionya dibangkitkan model musik. Lagunya bisa langsung diputar dan
-          diunduh sebagai berkas MP3.
+          Tulis satu kalimat, dapatkan lagu utuh 2,5 menit — lirik ditulis AI,
+          lalu audionya dibangkitkan model musik. Lagunya bisa langsung diputar
+          dan diunduh sebagai berkas MP3.
         </p>
 
         {/*
