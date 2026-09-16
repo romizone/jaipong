@@ -26,12 +26,12 @@ const EXAMPLES = [
   "Dangdut koplo penyemangat kerja pagi",
 ];
 
-const DURATIONS = [
-  { value: 45, label: "45 dtk" },
-  { value: 90, label: "1.5 mnt" },
-  { value: 150, label: "2.5 mnt" },
-  { value: 240, label: "4 mnt" },
-];
+/**
+ * Semua lagu dibuat 2,5 menit. Pemilih durasi dihapus: model musik dibayar
+ * per lagu, bukan per detik, jadi durasi pendek tidak lebih murah — dan
+ * 2,5 menit cukup untuk dua verse, chorus berulang, dan bridge.
+ */
+const DURATION_SEC = 150;
 
 type Props = {
   busy: boolean;
@@ -47,7 +47,6 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
   const [styleTags, setStyleTags] = useState("");
   const [instrumental, setInstrumental] = useState(false);
   const [vocal, setVocal] = useState<VocalType>("female");
-  const [duration, setDuration] = useState(90);
 
   const canSubmit =
     !busy && (prompt.trim().length > 0 || lyrics.trim().length > 0 || styleTags.trim().length > 0);
@@ -86,7 +85,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
       styleTags: styleTags.trim(),
       instrumental,
       vocal: instrumental ? "none" : vocal,
-      duration,
+      duration: DURATION_SEC,
     });
   }
 
@@ -157,61 +156,38 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
         </div>
       </fieldset>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <div>
-          <span className="block text-sm font-medium text-ink">Durasi</span>
-          <div className="mt-2 grid grid-cols-4 gap-1 rounded-xl border border-line bg-night-2/70 p-1">
-            {DURATIONS.map((option) => (
+      <div className="mt-5">
+        <span className="block text-sm font-medium text-ink">Vokal</span>
+        <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-line bg-night-2/70 p-1">
+          {(
+            [
+              ["female", "Wanita"],
+              ["male", "Pria"],
+              ["none", "Instrumen"],
+            ] as const
+          ).map(([value, label]) => {
+            const active = value === "none" ? instrumental : !instrumental && vocal === value;
+            return (
               <button
-                key={option.value}
+                key={value}
                 type="button"
-                onClick={() => setDuration(option.value)}
-                aria-pressed={duration === option.value}
+                onClick={() => {
+                  if (value === "none") {
+                    setInstrumental(true);
+                  } else {
+                    setInstrumental(false);
+                    setVocal(value);
+                  }
+                }}
+                aria-pressed={active}
                 className={`rounded-lg px-2 py-2 text-xs font-medium transition ${
-                  duration === option.value
-                    ? "bg-gold text-night"
-                    : "text-muted hover:text-ink"
+                  active ? "bg-gold text-night" : "text-muted hover:text-ink"
                 }`}
               >
-                {option.label}
+                {label}
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <span className="block text-sm font-medium text-ink">Vokal</span>
-          <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-line bg-night-2/70 p-1">
-            {(
-              [
-                ["female", "Wanita"],
-                ["male", "Pria"],
-                ["none", "Instrumen"],
-              ] as const
-            ).map(([value, label]) => {
-              const active = value === "none" ? instrumental : !instrumental && vocal === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => {
-                    if (value === "none") {
-                      setInstrumental(true);
-                    } else {
-                      setInstrumental(false);
-                      setVocal(value);
-                    }
-                  }}
-                  aria-pressed={active}
-                  className={`rounded-lg px-2 py-2 text-xs font-medium transition ${
-                    active ? "bg-gold text-night" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
+            );
+          })}
         </div>
       </div>
 

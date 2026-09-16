@@ -84,7 +84,7 @@ export async function POST(req: Request) {
   const duration = Math.round(
     Math.min(
       LIMITS.maxDuration,
-      Math.max(LIMITS.minDuration, Number(body.duration) || 120),
+      Math.max(LIMITS.minDuration, Number(body.duration) || 150),
     ),
   );
 
