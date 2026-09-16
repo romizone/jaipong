@@ -46,11 +46,6 @@ export const LIMITS = {
   minDuration: num("MIN_DURATION_SEC", 30),
   maxDuration: num("MAX_DURATION_SEC", 240),
 
-  /** Pagar aransemen supaya satu lagu tidak meledak ukurannya. */
-  maxSections: num("MAX_SECTIONS", 16),
-  maxBarsPerSection: num("MAX_BARS_PER_SECTION", 32),
-  maxNotesPerSong: num("MAX_NOTES_PER_SONG", 1_600),
-
   /** Situs terbuka tanpa login, jadi ada kuota per IP. */
   burst: num("COMPOSE_BURST_LIMIT", 6),
   burstWindowSec: num("COMPOSE_BURST_WINDOW_SEC", 300),
