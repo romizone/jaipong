@@ -75,6 +75,10 @@ export async function POST(req: Request) {
   });
 
   const encoder = new TextEncoder();
+  // Permintaan ke hulu dibatalkan begitu klien pergi — lewat req.signal maupun
+  // cancel() aliran — supaya token tidak terus dihabiskan untuk yang tak didengar.
+  const abort = new AbortController();
+  req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -85,9 +89,6 @@ export async function POST(req: Request) {
           // Klien menutup koneksi lebih dulu.
         }
       };
-
-      const abort = new AbortController();
-      req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
       try {
         send({
@@ -138,6 +139,8 @@ export async function POST(req: Request) {
 
         send({ type: "plan", plan });
       } catch (error) {
+        // Klien sudah pergi; pembatalannya bukan kegagalan yang perlu dicatat.
+        if (abort.signal.aborted) return;
         const message =
           error instanceof UpstreamError
             ? error.message
@@ -151,6 +154,9 @@ export async function POST(req: Request) {
           // Klien sudah memutus koneksi; alirannya memang sudah tertutup.
         }
       }
+    },
+    cancel() {
+      abort.abort();
     },
   });
 

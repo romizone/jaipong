@@ -36,11 +36,25 @@ function run<T>(
     (db) =>
       new Promise<T>((resolve, reject) => {
         const tx = db.transaction(STORE, mode);
-        tx.oncomplete = () => db.close();
-        tx.onabort = () => db.close();
         const request = op(tx.objectStore(STORE));
-        request.onsuccess = () => resolve(request.result as T);
-        request.onerror = () => reject(request.error ?? new Error("indexeddb"));
+        let result: T | undefined;
+        request.onsuccess = () => {
+          result = request.result as T;
+        };
+        const fail = () => reject(tx.error ?? request.error ?? new Error("indexeddb"));
+        // Diselesaikan saat transaksinya benar-benar commit, bukan saat
+        // request-nya sukses: penyimpanan yang penuh baru ketahuan di sini pada
+        // sebagian browser, dan putAudio jangan sampai melapor "tersimpan" untuk
+        // audio yang sebenarnya dibuang.
+        tx.oncomplete = () => {
+          db.close();
+          resolve(result as T);
+        };
+        tx.onabort = () => {
+          db.close();
+          fail();
+        };
+        tx.onerror = fail;
       }),
   );
 }

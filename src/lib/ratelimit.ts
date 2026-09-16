@@ -26,31 +26,53 @@ function memoryIncr(key: string, ttlSec: number): number {
   return existing.count;
 }
 
-async function upstashIncr(key: string, ttlSec: number): Promise<number> {
+function memoryDecr(key: string): void {
+  const existing = memory.get(key);
+  if (existing && existing.count > 0) existing.count -= 1;
+}
+
+type PipelineReply = Array<{ result?: unknown; error?: string }>;
+
+async function upstashPipeline(commands: string[][]): Promise<PipelineReply> {
   const res = await fetch(`${UPSTASH_URL}/pipeline`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${UPSTASH_TOKEN}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify([
-      ["INCR", key],
-      ["EXPIRE", key, String(ttlSec), "NX"],
-    ]),
+    body: JSON.stringify(commands),
     cache: "no-store",
+    // Store yang menggantung jangan ikut menggantungkan permintaan; lewat
+    // batas ini penghitung memori yang mengambil alih.
+    signal: AbortSignal.timeout(1_500),
   });
   if (!res.ok) throw new Error(`upstash ${res.status}`);
-  const data = (await res.json()) as Array<{ result: number }>;
-  return Number(data?.[0]?.result ?? 0);
+  const data = (await res.json()) as PipelineReply;
+  // Upstash menjawab 200 walau perintahnya gagal — kesalahannya ada di badan.
+  // Tanpa pemeriksaan ini INCR yang gagal terbaca 0 dan semua batas lolos.
+  const failed = Array.isArray(data) ? data.find((entry) => entry?.error) : undefined;
+  if (!Array.isArray(data) || failed) throw new Error(`upstash: ${failed?.error ?? "jawaban tidak dikenal"}`);
+  return data;
+}
+
+async function upstashIncr(key: string, ttlSec: number): Promise<number> {
+  const data = await upstashPipeline([
+    ["INCR", key],
+    ["EXPIRE", key, String(ttlSec), "NX"],
+  ]);
+  const count = Number(data[0]?.result);
+  if (!Number.isFinite(count) || count < 1) throw new Error("upstash: hitungan tidak sah");
+  return count;
 }
 
 async function incr(key: string, ttlSec: number): Promise<number> {
   if (hasSharedStore) {
     try {
       return await upstashIncr(key, ttlSec);
-    } catch {
+    } catch (error) {
       // Kalau store bersama sedang bermasalah, jangan matikan situs —
       // turun ke penghitung memori supaya batas tetap ada.
+      console.error("[ratelimit] upstash gagal, memakai memori", error);
     }
   }
   return memoryIncr(key, ttlSec);
@@ -144,4 +166,23 @@ export async function checkComposeQuota(ip: string): Promise<Quota> {
     86_400,
     "Kuota lagu harian situs ini sudah habis. Silakan coba lagi besok.",
   );
+}
+
+/**
+ * Kembalikan jatah yang dipotong checkComposeQuota bila hulu gagal sebelum
+ * lagunya jadi — gangguan layanan jangan menghabiskan kuota pengguna sampai
+ * ia terkunci "terlalu banyak lagu". Sekadar usaha: kalau store-nya sedang
+ * bermasalah, jatahnya hangus saja.
+ */
+export async function refundComposeQuota(ip: string): Promise<void> {
+  const keys = [`s:b:${ip}`, `s:d:${ip}:${today()}`, `s:g:${today()}`];
+  if (hasSharedStore) {
+    try {
+      await upstashPipeline(keys.map((key) => ["DECR", key]));
+      return;
+    } catch {
+      // Jatuh ke penghitung memori, tempat jatahnya mungkin dipotong tadi.
+    }
+  }
+  for (const key of keys) memoryDecr(key);
 }

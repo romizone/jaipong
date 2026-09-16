@@ -169,7 +169,9 @@ export function createGraph(ctx: BaseAudioContext, output: AudioNode): Graph {
  * dan osc.start(NaN) melempar kesalahan yang menjatuhkan seluruh halaman.
  */
 function schedule(ctx: BaseAudioContext, graph: Graph, event: AudioEvent, at: number): void {
-  if (!Number.isFinite(at) || !Number.isFinite(event.gain)) return;
+  // Waktu negatif pun ditolak: jalur ekspor WAV tidak punya saringan
+  // "at >= currentTime" seperti pemutar, dan osc.start(-1) melempar RangeError.
+  if (!Number.isFinite(at) || at < 0 || !Number.isFinite(event.gain)) return;
 
   if (event.kind === "drum") {
     drum(event.drum)({ ctx, dest: graph.buses.drums, t: at, gain: event.gain });
@@ -302,7 +304,8 @@ export class SongPlayer {
    */
   unlock(): void {
     const ctx = this.ensureContext();
-    if (ctx.state === "suspended") void ctx.resume();
+    // Termasuk "interrupted" milik iOS Safari, bukan hanya "suspended".
+    if (ctx.state !== "running") void ctx.resume();
   }
 
   load(song: Song): void {
@@ -331,7 +334,7 @@ export class SongPlayer {
     if (!this.timeline) return;
 
     const ctx = this.ensureContext();
-    if (ctx.state === "suspended") await ctx.resume();
+    if (ctx.state !== "running") await ctx.resume();
 
     const start = from ?? this.pausedAt;
     this.rebuildGraph();
@@ -441,6 +444,9 @@ export class SongPlayer {
       this.silence();
       this.pausedAt = 0;
       this.setState("idle");
+      // Posisi ikut kembali ke 0 seperti pemutar internalnya — tanpa ini
+      // bilah menunjukkan lagu di ujung, padahal Putar berikutnya mulai dari awal.
+      this.callbacks.onPosition?.(0);
       this.callbacks.onEnd?.();
       return;
     }

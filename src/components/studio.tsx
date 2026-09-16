@@ -34,6 +34,7 @@ import {
   getServerLibrary,
   saveSong,
   subscribeLibrary,
+  updateSong,
 } from "@/lib/client/storage";
 import { TrackPlayer } from "@/lib/client/track-player";
 import {
@@ -46,11 +47,18 @@ import {
 
 type Draft = { title: string; lines: string[] };
 
-async function httpError(res: Response): Promise<Error> {
+/**
+ * Pesan yang memang ditulis aplikasi (oleh server atau klien) dan aman
+ * ditampilkan apa adanya. Error lain — "Failed to fetch", DOMException —
+ * adalah kegagalan jaringan/browser yang pesannya bukan untuk pengguna.
+ */
+class ComposeError extends Error {}
+
+async function httpError(res: Response): Promise<ComposeError> {
   const detail = (await res.json().catch(() => null)) as
     | { error?: string }
     | null;
-  return new Error(detail?.error ?? "Lagu gagal disusun. Coba lagi.");
+  return new ComposeError(detail?.error ?? "Lagu gagal disusun. Coba lagi.");
 }
 
 export function Studio() {
@@ -82,6 +90,12 @@ export function Studio() {
   const synthRef = useRef<SongPlayer | null>(null);
   const trackRef = useRef<TrackPlayer | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * Nomor urut permintaan putar. Memuat lagu itu asinkron (baca IndexedDB,
+   * dekode); permintaan yang tersalip klik berikutnya mengalah, supaya yang
+   * berbunyi selalu lagu yang terakhir diklik — bukan yang selesai terakhir.
+   */
+  const playSeqRef = useRef(0);
   /** Blob lagu aktif — cadangan kalau IndexedDB tidak bisa dipakai. */
   const blobRef = useRef<{ id: string; blob: Blob } | null>(null);
   /** Bagian lagu aktif, untuk digulirkan ke pandangan begitu lagunya jadi. */
@@ -140,21 +154,25 @@ export function Studio() {
       const player = trackRef.current;
       if (!player) return;
 
+      const seq = ++playSeqRef.current;
       setStatus("Menyiapkan pemutar…");
+      // decode() tidak menyentuh pemutar: lagu yang sedang didengar terus
+      // berbunyi sampai penggantinya benar-benar siap dan memang jadi diputar.
+      let buffer: AudioBuffer;
       try {
-        await player.load(blob);
+        buffer = await player.decode(blob);
       } catch (caught) {
         console.error("[jaipong] audio tidak bisa didekode", caught);
-        throw new Error(
+        throw new ComposeError(
           "Audio yang diterima tidak bisa diputar. Coba buat lagunya sekali lagi.",
         );
       }
-      // Pengguna membatalkan (atau memulai lagu lain) selagi audionya didekode:
-      // hasil yang sudah tidak diminta jangan disimpan, apalagi diputar.
+      // Pengguna membatalkan selagi audionya didekode: hasil yang sudah tidak
+      // diminta jangan disimpan, apalagi diputar.
       if (signal.aborted) return;
 
       const track =
-        player.duration > 0 ? { ...incoming, durationSec: player.duration } : incoming;
+        buffer.duration > 0 ? { ...incoming, durationSec: buffer.duration } : incoming;
 
       blobRef.current = { id: track.id, blob };
       const stored = await putAudio(track.id, blob);
@@ -164,9 +182,13 @@ export function Studio() {
         console.warn("[jaipong] IndexedDB tidak tersedia; audio hanya untuk sesi ini");
       }
 
-      synthRef.current?.stop();
-      player.setVolume(volume);
+      // Lagunya tetap masuk pustaka — sudah dibayar — tapi hanya diputar kalau
+      // pengguna tidak sedang memutar lagu lain yang diklik belakangan.
       saveSong(track);
+      if (seq !== playSeqRef.current) return;
+
+      synthRef.current?.stop();
+      player.use(buffer);
       setCurrent(track);
       setPosition(0);
       void player.play(0);
@@ -182,7 +204,10 @@ export function Studio() {
         });
       }, 120);
     },
-    [volume],
+    // Volume sengaja tidak disetel di sini: kedua pemutar menyimpan volumenya
+    // sendiri lewat changeVolume, dan closure ini bisa berumur semenit lebih —
+    // nilai basinya akan menimpa geseran pengguna tepat saat lagu baru mulai.
+    [],
   );
 
   const compose = useCallback(
@@ -264,10 +289,11 @@ export function Studio() {
         }
       } catch (caught) {
         if (!controller.signal.aborted) {
+          if (!(caught instanceof ComposeError)) console.error("[jaipong] compose", caught);
           setError(
-            caught instanceof Error
+            caught instanceof ComposeError
               ? caught.message
-              : "Lagu gagal disusun. Coba lagi sebentar lagi.",
+              : "Koneksi terputus saat lagu disusun. Periksa jaringan lalu coba lagi.",
           );
         }
       } finally {
@@ -300,18 +326,27 @@ export function Studio() {
       if (!synth || !track) return;
 
       if (current?.id === item.id) {
+        // Niat putar terbaru menang: lagu lain yang masih dimuat di latar
+        // mengalah, supaya tidak ada dua lagu yang berbunyi bersamaan.
+        playSeqRef.current += 1;
         const player = isTrack(item) ? track : synth;
         if (player.currentState === "playing") player.pause();
         else void player.play();
         return;
       }
 
+      const seq = ++playSeqRef.current;
+      // Masih layak diputar setelah menunggu? Bukan kalau ada klik lain yang
+      // menyusul, atau lagunya keburu dihapus dari pustaka.
+      const stillWanted = () =>
+        seq === playSeqRef.current && getLibrary().some((s) => s.id === item.id);
+
       setError(null);
       if (isTrack(item)) {
-        synth.stop();
         track.unlock();
         const cached = blobRef.current?.id === item.id ? blobRef.current.blob : null;
         const blob = cached ?? (await getAudio(item.id));
+        if (!stillWanted()) return;
         if (!blob) {
           setError(
             "Audio lagu ini tidak lagi tersimpan di browser ini. Buat ulang lagunya untuk mendengarnya lagi.",
@@ -320,9 +355,9 @@ export function Studio() {
         }
         blobRef.current = { id: item.id, blob };
 
-        let fixed = item;
+        let buffer: AudioBuffer;
         try {
-          await track.load(blob);
+          buffer = await track.decode(blob);
         } catch (caught) {
           // Tanpa ini kegagalan dekode jadi unhandled rejection: tidak ada
           // yang terjadi di layar dan pengguna mengira tombolnya rusak.
@@ -332,31 +367,48 @@ export function Studio() {
           );
           return;
         }
-        if (track.duration > 0 && Math.abs(track.duration - item.durationSec) > 0.5) {
-          fixed = { ...item, durationSec: track.duration };
-          saveSong(fixed);
+        if (!stillWanted()) return;
+
+        let fixed = item;
+        if (buffer.duration > 0 && Math.abs(buffer.duration - item.durationSec) > 0.5) {
+          fixed = { ...item, durationSec: buffer.duration };
+          updateSong(fixed);
         }
+        // Lagu yang sedang berbunyi baru dihentikan sekarang, saat penggantinya
+        // sudah siap — bukan di awal dekode.
+        synth.stop();
+        track.use(buffer);
         setCurrent(fixed);
         setPosition(0);
-        track.setVolume(volume);
         void track.play(0);
       } else {
+        // Timeline dibangun di sini, sebelum setCurrent: lagu tersimpan yang
+        // rusak gagal sebagai pesan, bukan saat render sebagai halaman putih.
+        try {
+          synth.load(item);
+        } catch (caught) {
+          console.error("[jaipong] lagu partitur tidak bisa dimuat", caught);
+          setError(
+            "Lagu ini rusak dan tidak bisa diputar. Hapus lalu buat ulang lagunya.",
+          );
+          return;
+        }
         track.stop();
         setCurrent(item);
         setPosition(0);
-        synth.load(item);
-        synth.setVolume(volume);
         synth.setSinging(singing);
         void synth.play(0);
       }
     },
-    [current, singing, volume],
+    [current, singing],
   );
 
   const toggle = useCallback(() => {
     if (!current) return;
     const player = isTrack(current) ? trackRef.current : synthRef.current;
     if (!player) return;
+    // Sama seperti klik pada lagu aktif: lagu yang masih dimuat mengalah.
+    playSeqRef.current += 1;
     if (player.currentState === "playing") player.pause();
     else void player.play();
   }, [current]);
@@ -377,12 +429,13 @@ export function Studio() {
     trackRef.current?.setVolume(value);
   }, []);
 
-  const toggleSinging = useCallback(() => {
-    setSinging((on) => {
-      synthRef.current?.setSinging(!on);
-      return !on;
-    });
-  }, []);
+  const toggleSinging = useCallback(() => setSinging((on) => !on), []);
+
+  // Pemutar synth mengikuti sakelarnya lewat effect, bukan di dalam updater
+  // setState — updater bisa dijalankan dua kali (StrictMode) dan harus murni.
+  useEffect(() => {
+    synthRef.current?.setSinging(singing);
+  }, [singing]);
 
   const remove = useCallback(
     (item: LibraryItem) => {
@@ -481,7 +534,8 @@ export function Studio() {
       }
       if (!current) return;
 
-      if (event.code === "Space") {
+      // event.key ikut diperiksa: papan ketik virtual kerap mengosongkan code.
+      if (event.code === "Space" || event.key === " ") {
         event.preventDefault();
         toggle();
       } else if (event.key === "ArrowLeft") {

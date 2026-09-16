@@ -117,7 +117,9 @@ export function LyricsPanel({ sections, position, playing, onSeek }: Props) {
                   </button>
                 );
               })}
-            {!section.lines.some((line) => line.text.trim()) && (
+            {/* Penanda per bagian hanya untuk lagu campuran; lagu yang
+                sepenuhnya instrumental sudah dijelaskan di atas. */}
+            {hasLyrics && !section.lines.some((line) => line.text.trim()) && (
               <p className="text-sm italic text-faint">instrumental</p>
             )}
           </div>

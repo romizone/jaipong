@@ -9,10 +9,21 @@ const jakarta = Plus_Jakarta_Sans({
   display: "swap",
 });
 
-const SITE = process.env.SITE_URL ?? "https://jaipong.rominur.com";
+const DEFAULT_SITE = "https://jaipong.rominur.com";
+
+/** SITE_URL yang salah tulis jangan sampai menjatuhkan seluruh halaman. */
+function siteUrl(): URL {
+  try {
+    return new URL(process.env.SITE_URL ?? DEFAULT_SITE);
+  } catch {
+    return new URL(DEFAULT_SITE);
+  }
+}
+
+const SITE = siteUrl();
 
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE),
+  metadataBase: SITE,
   title: {
     default: "Jaipong — Bikin Lagu dengan AI",
     template: "%s · Jaipong",

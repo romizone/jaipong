@@ -6,7 +6,19 @@ import type { SongPlan, TimedLine, VocalType } from "@/lib/types";
  * Berkas ini hanya dipakai di sisi server (memakai Buffer).
  */
 
-const FIELD = /^(JUDUL|GENRE|TAG|VOKAL|GAYA|LIRIK)\s*:\s*(.*)$/i;
+/**
+ * Label rencana. Hiasan markdown di sekitar label dan titik dua ("**JUDUL:**",
+ * "**VOKAL**: wanita") ditoleransi — model kadang menebalkannya walau diminta
+ * format polos, dan tanpa toleransi ini rencananya terbaca kosong.
+ */
+const FIELD = /^(JUDUL|GENRE|TAG|VOKAL|GAYA|LIRIK)[*_\s]*:[*_\s]*(.*)$/i;
+/** Di blok lirik hanya label huruf besar yang dianggap label — "Judul: kisah kita" bisa saja lirik. */
+const FIELD_IN_LYRICS = /^(JUDUL|GENRE|TAG|VOKAL|GAYA|LIRIK)\s*:\s*(.*)$/;
+/** Awalan markdown yang kadang membungkus label: "## ", "**", "- ", "> ". */
+const DECOR_START = /^[#*_>\-\s]+/;
+const DECOR_END = /[*_\s]+$/;
+/** Pagar kode dan garis pemisah bukan lirik — jangan sampai ikut dinyanyikan. */
+const NOT_LYRIC = /^(`{3,}|([-*_])\2{2,}\s*$)/;
 
 /**
  * Pengurai rencana yang bekerja sambil teksnya mengalir. Format
@@ -27,12 +39,18 @@ export function createPlanParser(handlers: {
 
   const handleLine = (raw: string): void => {
     const line = raw.replace(/\r$/, "");
-    const m = FIELD.exec(line.trim());
+    const text = line.trim();
+    const m =
+      mode === "lyrics"
+        ? FIELD_IN_LYRICS.exec(text)
+        : FIELD.exec(text.replace(DECOR_START, "").replace(DECOR_END, ""));
     if (m) {
       const key = m[1]!.toUpperCase();
-      const rest = m[2]!.trim();
+      const rest = m[2]!.replace(DECOR_END, "").trim();
       if (key === "LIRIK") {
         mode = "lyrics";
+        // "LIRIK: [Verse 1]" — isi di baris yang sama adalah baris lirik pertama.
+        if (rest) handleLine(rest);
         return;
       }
       fields[key] = rest;
@@ -45,8 +63,8 @@ export function createPlanParser(handlers: {
     }
 
     if (mode === "lyrics") {
+      if (NOT_LYRIC.test(text)) return;
       lyrics.push(line);
-      const text = line.trim();
       // Label bagian ([Verse 1], [Chorus]) tidak dikirim sebagai baris lirik.
       if (text && !/^\[[^\]]*\]$/.test(text)) handlers.onLyric?.(text);
       return;
@@ -120,6 +138,21 @@ export function parseTimedLines(content: string): TimedLine[] {
     if (!/^\[[^\]]*\]$/.test(line)) out.push({ text: line.slice(0, 300) });
   }
   return out.slice(0, 200);
+}
+
+/**
+ * Genapkan base64 yang mengalir. Hulu boleh memotong string base64-nya di
+ * mana saja; bagian yang sudah kelipatan empat siap dikirim, sisanya ditunda
+ * ke potongan berikutnya. Tanpa ini potongan sepanjang 4n+1 membuat atob()
+ * di klien melempar, dan 4n+2/4n+3 menggeser bit potongan sesudahnya.
+ */
+export function alignBase64(
+  carry: string,
+  incoming: string,
+): { ready: string; rest: string } {
+  const joined = carry + incoming;
+  const usable = joined.length - (joined.length % 4);
+  return { ready: joined.slice(0, usable), rest: joined.slice(usable) };
 }
 
 /**

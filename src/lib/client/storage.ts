@@ -37,6 +37,8 @@ function isPlayableSong(value: unknown): value is Song {
     s.bpm > 0 &&
     typeof s.key === "string" &&
     typeof s.groove === "string" &&
+    Boolean(s.instruments) &&
+    typeof s.instruments === "object" &&
     Array.isArray(s.styleTags) &&
     Array.isArray(s.sections) &&
     s.sections.length > 0 &&
@@ -44,9 +46,29 @@ function isPlayableSong(value: unknown): value is Song {
       (section) =>
         Boolean(section) &&
         typeof section === "object" &&
+        // Jumlah birama dibatasi: nilai raksasa membuat penata aransemen
+        // berputar sampai tab membeku.
         Number.isFinite(section.bars) &&
+        section.bars > 0 &&
+        section.bars <= 128 &&
         Array.isArray(section.chords) &&
-        Array.isArray(section.lines),
+        Array.isArray(section.lines) &&
+        section.lines.every(
+          (line) =>
+            Boolean(line) &&
+            typeof line.text === "string" &&
+            Array.isArray(line.notes) &&
+            line.notes.every(
+              (note) =>
+                Boolean(note) &&
+                typeof note === "object" &&
+                Number.isFinite(note.d) &&
+                Number.isFinite(note.t) &&
+                note.t >= 0 &&
+                Number.isFinite(note.l) &&
+                (note.s === undefined || typeof note.s === "string"),
+            ),
+        ),
     )
   );
 }
@@ -149,6 +171,20 @@ export function getServerLibrary(): LibraryItem[] {
 
 export function saveSong(item: LibraryItem): void {
   cache = persist([item, ...getLibrary().filter((s) => s.id !== item.id)]);
+  emit();
+}
+
+/**
+ * Perbarui metadata lagu yang sudah ada di tempatnya: urutan pustaka tidak
+ * berubah, dan lagu yang keburu dihapus tidak dihidupkan kembali.
+ */
+export function updateSong(item: LibraryItem): void {
+  const items = getLibrary();
+  const index = items.findIndex((s) => s.id === item.id);
+  if (index === -1) return;
+  const next = items.slice();
+  next[index] = item;
+  cache = persist(next);
   emit();
 }
 

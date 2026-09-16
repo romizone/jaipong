@@ -79,6 +79,9 @@ export async function* readSse(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  // Satu baris audio base64 bisa beberapa MB dan datang berpotongan kecil;
+  // tanpa penanda ini tiap potongan memindai ulang seluruh buffer dari awal.
+  let scanFrom = 0;
 
   try {
     while (true) {
@@ -87,9 +90,10 @@ export async function* readSse(
       buffer += decoder.decode(value, { stream: true });
 
       let index: number;
-      while ((index = buffer.indexOf("\n")) !== -1) {
+      while ((index = buffer.indexOf("\n", scanFrom)) !== -1) {
         const line = buffer.slice(0, index).trim();
         buffer = buffer.slice(index + 1);
+        scanFrom = 0;
         if (!line || line.startsWith(":")) continue;
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
@@ -108,6 +112,8 @@ export async function* readSse(
         if (event.error) throw midStreamError(event.error);
         yield event;
       }
+      // Sisa buffer sudah pasti tanpa baris baru; lanjutkan dari ujungnya.
+      scanFrom = buffer.length;
     }
   } finally {
     reader.cancel().catch(() => {});

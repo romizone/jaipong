@@ -6,9 +6,15 @@ import {
   readSse,
   streamChat,
 } from "@/lib/openrouter";
-import { chunkBase64, newId, parseTimedLines, sniffAudio } from "@/lib/plan";
+import {
+  alignBase64,
+  chunkBase64,
+  newId,
+  parseTimedLines,
+  sniffAudio,
+} from "@/lib/plan";
 import { buildMusicPrompt } from "@/lib/prompt";
-import { checkComposeQuota, clientIp } from "@/lib/ratelimit";
+import { checkComposeQuota, clientIp, refundComposeQuota } from "@/lib/ratelimit";
 import type {
   ComposeEvent,
   RenderRequest,
@@ -54,7 +60,7 @@ function sanitizePlan(raw: unknown, instrumental: boolean): SongPlan {
     genreLabel: str(p.genreLabel, 60, "Original"),
     styleTags: Array.isArray(p.styleTags)
       ? p.styleTags
-          .map((t) => String(t ?? "").trim().toLowerCase())
+          .map((t) => String(t ?? "").trim().toLowerCase().slice(0, 40))
           .filter(Boolean)
           .slice(0, 8)
       : [],
@@ -88,10 +94,16 @@ export async function POST(req: Request) {
     ),
   );
 
-  const quota = await checkComposeQuota(clientIp(req));
+  const ip = clientIp(req);
+  const quota = await checkComposeQuota(ip);
   if (!quota.ok) return bad(quota.message, 429);
 
   const encoder = new TextEncoder();
+  // Permintaan ke hulu dibatalkan begitu klien pergi — lewat req.signal maupun
+  // cancel() aliran — supaya model musik tidak terus bekerja untuk yang tak
+  // akan didengar.
+  const abort = new AbortController();
+  req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -102,9 +114,6 @@ export async function POST(req: Request) {
           // Klien menutup koneksi lebih dulu.
         }
       };
-
-      const abort = new AbortController();
-      req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
       try {
         send({
@@ -126,6 +135,8 @@ export async function POST(req: Request) {
         let format: "mp3" | "wav" = "mp3";
         let content = "";
         let b64Length = 0;
+        // Sisa base64 yang belum genap empat karakter, ditunda ke delta berikutnya.
+        let carry = "";
 
         for await (const event of readSse(upstream)) {
           const audio = deltaAudio(event);
@@ -138,18 +149,23 @@ export async function POST(req: Request) {
               began = true;
               send({ type: "audio-begin", mime: sniffed.mime, format });
             }
-            for (const piece of chunkBase64(audio)) {
+            const aligned = alignBase64(carry, audio);
+            carry = aligned.rest;
+            for (const piece of chunkBase64(aligned.ready)) {
               send({ type: "audio", b64: piece });
             }
             b64Length += audio.length;
           }
           content += deltaText(event);
         }
+        // Sisa satu karakter tak mungkin base64 yang sah; dua-tiga masih bisa didekode.
+        if (carry.length >= 2) send({ type: "audio", b64: carry });
 
         // Di bawah ~30 KB bukan lagu — anggap gagal supaya klien tidak
         // menyimpan berkas kosong.
         if (!began || b64Length < 40_000) {
           console.error("[render] audio kosong", content.slice(0, 300));
+          void refundComposeQuota(ip);
           send({
             type: "error",
             message: "Audio gagal dibangkitkan. Coba lagi sebentar lagi.",
@@ -170,6 +186,10 @@ export async function POST(req: Request) {
           send({ type: "track", track });
         }
       } catch (error) {
+        // Klien sudah pergi; pembatalannya bukan kegagalan yang perlu dicatat.
+        if (abort.signal.aborted) return;
+        // Hulu yang gagal bukan salah pengguna — jatahnya dikembalikan.
+        void refundComposeQuota(ip);
         const message =
           error instanceof UpstreamError
             ? error.message
@@ -183,6 +203,9 @@ export async function POST(req: Request) {
           // Klien sudah memutus koneksi; alirannya memang sudah tertutup.
         }
       }
+    },
+    cancel() {
+      abort.abort();
     },
   });
 

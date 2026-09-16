@@ -41,17 +41,31 @@ export class TrackPlayer {
     return this.analyserNode;
   }
 
-  /** Buka kunci audio selagi klik pengguna masih berlaku. */
+  /**
+   * Buka kunci audio selagi klik pengguna masih berlaku. Selain "suspended",
+   * iOS Safari punya "interrupted" (telepon masuk, layar terkunci) — apa pun
+   * selain "running" perlu dibangunkan.
+   */
   unlock(): void {
     const ctx = this.ensure();
-    if (ctx.state === "suspended") void ctx.resume();
+    if (ctx.state !== "running") void ctx.resume();
   }
 
-  async load(blob: Blob): Promise<void> {
-    this.stop();
+  /** Dekode berkas ke buffer — murni, tidak menyentuh keadaan pemutar. */
+  async decode(blob: Blob): Promise<AudioBuffer> {
     const ctx = this.ensure();
     const bytes = await blob.arrayBuffer();
-    this.buffer = await ctx.decodeAudioData(bytes);
+    return ctx.decodeAudioData(bytes);
+  }
+
+  /**
+   * Pasang buffer sebagai lagu aktif. Dipisah dari decode() supaya pemanggil
+   * bisa memutuskan dulu — dibatalkan? tersalip klik lain? — sebelum lagu
+   * yang sedang berbunyi dihentikan dan buffer-nya diganti.
+   */
+  use(buffer: AudioBuffer): void {
+    this.stop();
+    this.buffer = buffer;
     this.pausedAt = 0;
   }
 
@@ -66,7 +80,7 @@ export class TrackPlayer {
   async play(from?: number): Promise<void> {
     if (!this.buffer) return;
     const ctx = this.ensure();
-    if (ctx.state === "suspended") await ctx.resume();
+    if (ctx.state !== "running") await ctx.resume();
 
     this.stopSource();
     const offset = Math.min(
