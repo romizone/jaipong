@@ -80,7 +80,13 @@ export const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "")
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean);
 
-/** Opsional: Upstash Redis REST supaya kuota tetap akurat lintas instance serverless. */
-export const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL ?? "";
-export const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
+/**
+ * Upstash Redis REST: tempat jatah per akun, daftar pengguna, dan catatan
+ * pemakaian disimpan. Store yang dibuat lewat integrasi Vercel memakai nama
+ * KV_REST_API_*, jadi keduanya dikenali.
+ */
+export const UPSTASH_URL =
+  process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
+export const UPSTASH_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";
 export const hasSharedStore = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
