@@ -57,7 +57,28 @@ export const LIMITS = {
    * kalau situsnya memang ramai.
    */
   globalDaily: num("COMPOSE_GLOBAL_DAILY_LIMIT", 150),
+  /** Jatah lagu per akun Google per hari (hari dihitung menurut WIB). */
+  userDaily: num("USER_DAILY_LIMIT", 5),
 };
+
+/**
+ * Masuk dengan Google. Membuat lagu mensyaratkan akun; tanpa ketiga nilai ini
+ * tidak ada yang bisa masuk, jadi tidak ada lagu yang bisa dibuat.
+ * AUTH_SECRET menandatangani cookie sesi — string acak panjang, mis. hasil
+ * `openssl rand -base64 32`.
+ */
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
+export const AUTH_SECRET = process.env.AUTH_SECRET ?? "";
+export const hasAuth = Boolean(
+  GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && AUTH_SECRET,
+);
+
+/** Email yang boleh membaca catatan pemakaian di /api/log, dipisah koma. */
+export const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "")
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
 
 /** Opsional: Upstash Redis REST supaya kuota tetap akurat lintas instance serverless. */
 export const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL ?? "";

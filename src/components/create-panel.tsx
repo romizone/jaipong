@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Music4, Sparkles, Wand2 } from "lucide-react";
-import type { ComposeRequest, VocalType } from "@/lib/types";
+import { Loader2, LogIn, Music4, Sparkles, Wand2 } from "lucide-react";
+import type { Account, ComposeRequest, VocalType } from "@/lib/types";
 
 const PRESETS: Array<{ label: string; tags: string }> = [
   { label: "Pop Indonesia", tags: "pop indonesia, manis, gitar akustik" },
@@ -35,11 +35,13 @@ const DURATION_SEC = 150;
 
 type Props = {
   busy: boolean;
+  /** Akun yang sedang masuk; null selagi dimuat. */
+  account: Account | null;
   onSubmit: (request: ComposeRequest) => void;
   onCancel: () => void;
 };
 
-export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
+export function CreatePanel({ busy, account, onSubmit, onCancel }: Props) {
   const [prompt, setPrompt] = useState("");
   const [custom, setCustom] = useState(false);
   const [title, setTitle] = useState("");
@@ -48,8 +50,12 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
   const [instrumental, setInstrumental] = useState(false);
   const [vocal, setVocal] = useState<VocalType>("female");
 
+  const signedIn = Boolean(account?.user);
+  const remaining = account ? Math.max(0, account.limit - account.used) : 0;
+  // Server tetap yang menegakkan login dan jatahnya; ini hanya supaya
+  // tombolnya tidak mengundang klik yang pasti ditolak.
   const canSubmit =
-    !busy && (prompt.trim().length > 0 || lyrics.trim().length > 0 || styleTags.trim().length > 0);
+    !busy && signedIn && remaining > 0 && (prompt.trim().length > 0 || lyrics.trim().length > 0 || styleTags.trim().length > 0);
 
   /** Pecah isian gaya menjadi kata kunci satuan. */
   function parseTags(raw: string): string[] {
@@ -250,6 +256,15 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
       )}
 
       <div className="mt-5 flex gap-2">
+        {account && !account.user ? (
+          <a
+            href="/api/auth/login"
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gold to-rose px-4 py-3 text-sm font-semibold text-night shadow-[0_8px_24px_-10px_rgba(233,166,60,0.55)] transition hover:brightness-110 active:scale-[0.99]"
+          >
+            <LogIn size={16} aria-hidden />
+            Masuk dengan Google untuk membuat lagu
+          </a>
+        ) : (
         <button
           type="submit"
           disabled={!canSubmit}
@@ -267,6 +282,7 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
             </>
           )}
         </button>
+        )}
         {busy && (
           <button
             type="button"
@@ -277,6 +293,14 @@ export function CreatePanel({ busy, onSubmit, onCancel }: Props) {
           </button>
         )}
       </div>
+
+      {account?.user && (
+        <p className="mt-3 text-xs text-muted" aria-live="polite">
+          {remaining > 0
+            ? `Sisa ${remaining} dari ${account.limit} lagu hari ini.`
+            : `Jatah ${account.limit} lagu hari ini sudah habis — jatah baru tersedia besok.`}
+        </p>
+      )}
 
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
         Lirik ditulis AI, lalu audionya dibangkitkan model musik. Tulis lagu

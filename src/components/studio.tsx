@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import Image from "next/image";
-import { AlertTriangle, Library, Loader2 } from "lucide-react";
+import { AlertTriangle, Library, Loader2, LogIn, LogOut } from "lucide-react";
 import { CreatePanel } from "@/components/create-panel";
 import { LyricsPanel } from "@/components/lyrics-panel";
 import { PlayerBar, modeLabel } from "@/components/player-bar";
@@ -39,6 +39,7 @@ import {
 import { TrackPlayer } from "@/lib/client/track-player";
 import {
   isTrack,
+  type Account,
   type ComposeRequest,
   type LibraryItem,
   type SongPlan,
@@ -61,6 +62,16 @@ async function httpError(res: Response): Promise<ComposeError> {
   return new ComposeError(detail?.error ?? "Lagu gagal disusun. Coba lagi.");
 }
 
+/** Jaringan putus → null: keadaan terakhir dibiarkan, server tetap yang memutuskan. */
+async function fetchAccount(): Promise<Account | null> {
+  try {
+    const res = await fetch("/api/auth/me", { cache: "no-store" });
+    return res.ok ? ((await res.json()) as Account) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function Studio() {
   // Pustaka hidup di localStorage; React yang menjaga cuplikannya tetap sinkron.
   const library = useSyncExternalStore(subscribeLibrary, getLibrary, getServerLibrary);
@@ -72,6 +83,8 @@ export function Studio() {
   const [phase, setPhase] = useState<"plan" | "audio">("plan");
   const [draft, setDraft] = useState<Draft>({ title: "", lines: [] });
   const [error, setError] = useState<string | null>(null);
+  /** Akun Google yang sedang masuk beserta jatah lagunya; null selagi dimuat. */
+  const [account, setAccount] = useState<Account | null>(null);
 
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
   const [position, setPosition] = useState(0);
@@ -141,6 +154,33 @@ export function Studio() {
   useEffect(() => {
     durationRef.current = view?.duration ?? 0;
   }, [view]);
+
+  /* -------------------------------------------------------------- akun --- */
+
+  const refreshAccount = useCallback(async () => {
+    const latest = await fetchAccount();
+    if (latest) setAccount(latest);
+  }, []);
+
+  useEffect(() => {
+    void fetchAccount().then((latest) => {
+      if (latest) setAccount(latest);
+      // Google mengarahkan balik dengan ?masuk=... kalau proses masuknya gagal.
+      const reason = new URLSearchParams(window.location.search).get("masuk");
+      if (!reason) return;
+      setError(
+        reason === "belum"
+          ? "Masuk dengan Google belum dikonfigurasi di server. Hubungi pengelola situs."
+          : "Gagal masuk dengan Google. Coba sekali lagi.",
+      );
+      window.history.replaceState(null, "", window.location.pathname);
+    });
+  }, []);
+
+  const logout = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    await refreshAccount();
+  }, [refreshAccount]);
 
   /* ---------------------------------------------------------- menyusun --- */
 
@@ -305,9 +345,11 @@ export function Studio() {
           setComposing(false);
           setStatus("");
         }
+        // Jatah hari ini berubah (atau sesinya habis) — ambil angka terbaru.
+        void refreshAccount();
       }
     },
-    [adoptTrack],
+    [adoptTrack, refreshAccount],
   );
 
   const cancelCompose = useCallback(() => {
@@ -587,6 +629,7 @@ export function Studio() {
             Tulis satu kalimat, dapatkan lagu utuh 2,5 menit — lirik ditulis
             AI, lalu audionya dibangkitkan model musik.
           </p>
+          <AccountBadge account={account} onLogout={() => void logout()} />
         </div>
         <div
           aria-hidden
@@ -609,7 +652,12 @@ export function Studio() {
         */}
         <div className="mt-6 grid grid-cols-1 gap-6 lg:mt-0 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
           <div className="lg:sticky lg:top-6">
-            <CreatePanel busy={composing} onSubmit={compose} onCancel={cancelCompose} />
+            <CreatePanel
+              busy={composing}
+              account={account}
+              onSubmit={compose}
+              onCancel={cancelCompose}
+            />
           </div>
 
           <div className="space-y-6">
@@ -699,9 +747,11 @@ export function Studio() {
 
             <footer className="pt-2 text-[11px] leading-relaxed text-faint">
               <p>
-                Lagu disimpan di browser ini saja — tidak ada akun dan tidak ada
-                salinan di server. Membersihkan data situs berarti menghapus
-                pustakanya beserta audionya.
+                Membuat lagu perlu masuk dengan akun Google, paling banyak{" "}
+                {account?.limit ?? 5} lagu sehari. Nama, email, dan judul lagu
+                yang dibuat dicatat sebagai riwayat pemakaian. Audionya sendiri
+                hanya disimpan di browser ini — tidak ada salinan di server,
+                jadi membersihkan data situs berarti menghapus pustakanya.
               </p>
               <p className="mt-1.5">
                 Audio dibangkitkan model musik lewat OpenRouter. Lagu dari versi
@@ -729,6 +779,55 @@ export function Studio() {
         onDownload={() => current && void download(current)}
       />
     </>
+  );
+}
+
+/** Pojok akun di header: tombol masuk, atau nama + sisa jatah + keluar. */
+function AccountBadge({
+  account,
+  onLogout,
+}: {
+  account: Account | null;
+  onLogout: () => void;
+}) {
+  // Selagi dimuat tidak menampilkan apa-apa, supaya tombol "Masuk" tidak
+  // berkedip sebentar di depan pengguna yang sebenarnya sudah masuk.
+  if (!account) return null;
+
+  if (!account.user) {
+    return (
+      <a
+        href="/api/auth/login"
+        className="ml-auto flex shrink-0 items-center gap-2 rounded-xl border border-gold/40 bg-gold/10 px-3.5 py-2 text-sm font-semibold text-gold-soft transition hover:bg-gold/20 lg:ml-2"
+      >
+        <LogIn size={15} aria-hidden />
+        Masuk
+        <span className="hidden sm:inline">dengan Google</span>
+      </a>
+    );
+  }
+
+  const remaining = Math.max(0, account.limit - account.used);
+  return (
+    <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3 lg:ml-2">
+      <div className="min-w-0 text-right">
+        <p className="max-w-[9rem] truncate text-sm font-semibold text-ink sm:max-w-[14rem]">
+          {account.user.name}
+        </p>
+        <p className="text-[11px] text-muted">
+          Sisa {remaining} dari {account.limit} lagu
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onLogout}
+        title="Keluar"
+        aria-label="Keluar"
+        className="flex size-9 items-center justify-center rounded-full border border-line text-muted transition hover:text-ink"
+      >
+        <LogOut size={15} aria-hidden />
+      </button>
+    </div>
   );
 }
 

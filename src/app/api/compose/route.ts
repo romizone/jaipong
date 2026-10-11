@@ -1,3 +1,4 @@
+import { readSession } from "@/lib/auth";
 import { COMPOSER_MODEL, LIMITS, OPENROUTER_API_KEY } from "@/lib/config";
 import { UpstreamError, deltaText, readSse, streamChat } from "@/lib/openrouter";
 import { createPlanParser } from "@/lib/plan";
@@ -26,6 +27,10 @@ function bad(message: string, status: number): Response {
 export async function POST(req: Request) {
   if (!OPENROUTER_API_KEY) {
     return bad("Layanan belum dikonfigurasi. Hubungi pengelola situs.", 503);
+  }
+
+  if (!readSession(req)) {
+    return bad("Masuk dengan Google dulu untuk membuat lagu.", 401);
   }
 
   let body: ComposeRequest;

@@ -33,7 +33,7 @@ function memoryDecr(key: string): void {
 
 type PipelineReply = Array<{ result?: unknown; error?: string }>;
 
-async function upstashPipeline(commands: string[][]): Promise<PipelineReply> {
+export async function upstashPipeline(commands: string[][]): Promise<PipelineReply> {
   const res = await fetch(`${UPSTASH_URL}/pipeline`, {
     method: "POST",
     headers: {
@@ -82,8 +82,12 @@ export type Quota = { ok: true } | { ok: false; message: string };
 
 const OK: Quota = { ok: true };
 
+/**
+ * Tanggal hari ini menurut WIB. Penggunanya di Indonesia: jatah harian yang
+ * berganti pukul 07.00 pagi (tengah malam UTC) akan terasa janggal.
+ */
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -108,74 +112,9 @@ export function clientIp(req: Request): string {
   return "anon";
 }
 
-async function check(
-  key: string,
-  limit: number,
-  ttlSec: number,
-  message: string,
-): Promise<Quota> {
-  const used = await incr(key, ttlSec);
-  return used > limit ? { ok: false, message } : OK;
-}
-
-/**
- * Kuota tahap penulisan lirik. Lebih longgar dari kuota audio karena biayanya
- * kecil, tapi tetap ada supaya endpoint-nya tidak bisa dipompa sendirian.
- */
-export async function checkPlanQuota(ip: string): Promise<Quota> {
-  const burst = await check(
-    `p:b:${ip}`,
-    LIMITS.burst * 2,
-    LIMITS.burstWindowSec,
-    "Terlalu banyak permintaan dalam waktu singkat. Coba lagi beberapa menit lagi.",
-  );
-  if (!burst.ok) return burst;
-
-  return check(
-    `p:d:${ip}:${today()}`,
-    LIMITS.daily * 2,
-    86_400,
-    "Kuota harian untuk koneksi ini sudah habis. Silakan lanjut besok.",
-  );
-}
-
-/**
- * Kuota pembangkitan audio — tahap yang benar-benar berbiaya, jadi di sinilah
- * batas burst, harian, dan batas seluruh situs ditegakkan.
- */
-export async function checkComposeQuota(ip: string): Promise<Quota> {
-  const burst = await check(
-    `s:b:${ip}`,
-    LIMITS.burst,
-    LIMITS.burstWindowSec,
-    "Terlalu banyak lagu dalam waktu singkat. Coba lagi beberapa menit lagi.",
-  );
-  if (!burst.ok) return burst;
-
-  const daily = await check(
-    `s:d:${ip}:${today()}`,
-    LIMITS.daily,
-    86_400,
-    "Kuota lagu harian untuk koneksi ini sudah habis. Silakan lanjut besok.",
-  );
-  if (!daily.ok) return daily;
-
-  return check(
-    `s:g:${today()}`,
-    LIMITS.globalDaily,
-    86_400,
-    "Kuota lagu harian situs ini sudah habis. Silakan coba lagi besok.",
-  );
-}
-
-/**
- * Kembalikan jatah yang dipotong checkComposeQuota bila hulu gagal sebelum
- * lagunya jadi — gangguan layanan jangan menghabiskan kuota pengguna sampai
- * ia terkunci "terlalu banyak lagu". Sekadar usaha: kalau store-nya sedang
- * bermasalah, jatahnya hangus saja.
- */
-export async function refundComposeQuota(ip: string): Promise<void> {
-  const keys = [`s:b:${ip}`, `s:d:${ip}:${today()}`, `s:g:${today()}`];
+/** Kembalikan satu hitungan pada tiap kunci. Sekadar usaha. */
+async function decr(keys: string[]): Promise<void> {
+  if (!keys.length) return;
   if (hasSharedStore) {
     try {
       await upstashPipeline(keys.map((key) => ["DECR", key]));
@@ -185,4 +124,114 @@ export async function refundComposeQuota(ip: string): Promise<void> {
     }
   }
   for (const key of keys) memoryDecr(key);
+}
+
+type Rule = { key: string; limit: number; ttlSec: number; message: string };
+
+/**
+ * Potong satu hitungan dari tiap aturan, berurutan. Begitu satu aturan
+ * menolak, semua yang sudah terpotong dikembalikan: permintaan yang ditolak
+ * tidak boleh memakan jatah. Tanpa ini pengguna yang tersandung batas burst
+ * kehilangan satu dari lima lagunya hari itu tanpa mendapat lagu apa pun.
+ */
+async function take(rules: Rule[]): Promise<Quota> {
+  const taken: string[] = [];
+  for (const rule of rules) {
+    const used = await incr(rule.key, rule.ttlSec);
+    taken.push(rule.key);
+    if (used > rule.limit) {
+      await decr(taken);
+      return { ok: false, message: rule.message };
+    }
+  }
+  return OK;
+}
+
+/**
+ * Kuota tahap penulisan lirik. Lebih longgar dari kuota audio karena biayanya
+ * kecil, tapi tetap ada supaya endpoint-nya tidak bisa dipompa sendirian.
+ */
+export async function checkPlanQuota(ip: string): Promise<Quota> {
+  return take([
+    {
+      key: `p:b:${ip}`,
+      limit: LIMITS.burst * 2,
+      ttlSec: LIMITS.burstWindowSec,
+      message:
+        "Terlalu banyak permintaan dalam waktu singkat. Coba lagi beberapa menit lagi.",
+    },
+    {
+      key: `p:d:${ip}:${today()}`,
+      limit: LIMITS.daily * 2,
+      ttlSec: 86_400,
+      message: "Kuota harian untuk koneksi ini sudah habis. Silakan lanjut besok.",
+    },
+  ]);
+}
+
+function userKey(userId: string): string {
+  return `s:u:${userId}:${today()}`;
+}
+
+export type SongQuota =
+  | { ok: true; refund: () => Promise<void> }
+  | { ok: false; message: string };
+
+/**
+ * Kuota pembangkitan audio — tahap yang benar-benar berbiaya. Jatah utamanya
+ * per akun Google (LIMITS.userDaily lagu sehari); batas burst dan harian per
+ * IP serta batas seluruh situs tetap ada sebagai pagar terhadap satu orang
+ * dengan banyak akun.
+ *
+ * refund() mengembalikan jatah bila hulu gagal sebelum lagunya jadi —
+ * gangguan layanan jangan menghabiskan jatah pengguna. Kuncinya dibekukan di
+ * sini supaya lagu yang melewati tengah malam tetap dikembalikan ke hari
+ * tempat jatahnya dipotong.
+ */
+export async function checkSongQuota(ip: string, userId: string): Promise<SongQuota> {
+  const rules: Rule[] = [
+    {
+      key: userKey(userId),
+      limit: LIMITS.userDaily,
+      ttlSec: 86_400,
+      message: `Jatah ${LIMITS.userDaily} lagu hari ini sudah habis. Jatah baru tersedia besok.`,
+    },
+    {
+      key: `s:b:${ip}`,
+      limit: LIMITS.burst,
+      ttlSec: LIMITS.burstWindowSec,
+      message: "Terlalu banyak lagu dalam waktu singkat. Coba lagi beberapa menit lagi.",
+    },
+    {
+      key: `s:d:${ip}:${today()}`,
+      limit: LIMITS.daily,
+      ttlSec: 86_400,
+      message: "Kuota lagu harian untuk koneksi ini sudah habis. Silakan lanjut besok.",
+    },
+    {
+      key: `s:g:${today()}`,
+      limit: LIMITS.globalDaily,
+      ttlSec: 86_400,
+      message: "Kuota lagu harian situs ini sudah habis. Silakan coba lagi besok.",
+    },
+  ];
+
+  const quota = await take(rules);
+  if (!quota.ok) return quota;
+  return { ok: true, refund: () => decr(rules.map((rule) => rule.key)) };
+}
+
+/** Jumlah lagu yang sudah dibuat akun ini hari ini. */
+export async function songsUsedToday(userId: string): Promise<number> {
+  const key = userKey(userId);
+  if (hasSharedStore) {
+    try {
+      const data = await upstashPipeline([["GET", key]]);
+      return Math.max(0, Number(data[0]?.result ?? 0) || 0);
+    } catch {
+      // Jatuh ke penghitung memori.
+    }
+  }
+  const counter = memory.get(key);
+  return counter && counter.expiresAt > Date.now() ? Math.max(0, counter.count) : 0;
 }

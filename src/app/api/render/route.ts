@@ -1,3 +1,4 @@
+import { readSession } from "@/lib/auth";
 import { LIMITS, MUSIC_MODEL, OPENROUTER_API_KEY } from "@/lib/config";
 import {
   UpstreamError,
@@ -14,7 +15,9 @@ import {
   sniffAudio,
 } from "@/lib/plan";
 import { buildMusicPrompt } from "@/lib/prompt";
-import { checkComposeQuota, clientIp, refundComposeQuota } from "@/lib/ratelimit";
+import { checkSongQuota, clientIp } from "@/lib/ratelimit";
+import { logUsage, type UsageEntry } from "@/lib/usagelog";
+import { recordSong } from "@/lib/users";
 import type {
   ComposeEvent,
   RenderRequest,
@@ -28,8 +31,8 @@ export const maxDuration = 300;
 
 /**
  * Tahap kedua: model musik membangkitkan audionya dari rencana lagu.
- * Inilah tahap yang berbiaya (harga per lagu, bukan per token), jadi kuota
- * burst/harian/global ditegakkan di sini. Audio diteruskan ke klien
+ * Inilah tahap yang berbiaya (harga per lagu, bukan per token), jadi di
+ * sinilah jatah per akun ditegakkan dan tiap pemakaian dicatat. Audio diteruskan ke klien
  * berpotongan-potongan base64 lewat SSE, lalu ditutup metadata trek.
  */
 
@@ -75,6 +78,9 @@ export async function POST(req: Request) {
     return bad("Layanan belum dikonfigurasi. Hubungi pengelola situs.", 503);
   }
 
+  const user = readSession(req);
+  if (!user) return bad("Masuk dengan Google dulu untuk membuat lagu.", 401);
+
   let body: RenderRequest;
   try {
     body = (await req.json()) as RenderRequest;
@@ -95,8 +101,24 @@ export async function POST(req: Request) {
   );
 
   const ip = clientIp(req);
-  const quota = await checkComposeQuota(ip);
+  const quota = await checkSongQuota(ip, user.sub);
   if (!quota.ok) return bad(quota.message, 429);
+
+  // Ditunggu sebelum aliran ditutup: di serverless, pekerjaan yang masih
+  // menggantung setelah jawaban selesai bisa terpotong begitu saja.
+  const record = (status: UsageEntry["status"]) =>
+    logUsage({
+      waktu: new Date().toISOString(),
+      status,
+      sub: user.sub,
+      email: user.email,
+      nama: user.name,
+      judul: plan.title,
+      genre: plan.genreLabel,
+      vokal: plan.vocal,
+      durasi: duration,
+      ip,
+    });
 
   const encoder = new TextEncoder();
   // Permintaan ke hulu dibatalkan begitu klien pergi — lewat req.signal maupun
@@ -165,11 +187,12 @@ export async function POST(req: Request) {
         // menyimpan berkas kosong.
         if (!began || b64Length < 40_000) {
           console.error("[render] audio kosong", content.slice(0, 300));
-          void refundComposeQuota(ip);
+          await quota.refund();
           send({
             type: "error",
             message: "Audio gagal dibangkitkan. Coba lagi sebentar lagi.",
           });
+          await record("gagal");
         } else {
           const track: Track = {
             kind: "track",
@@ -184,12 +207,19 @@ export async function POST(req: Request) {
             lines: parseTimedLines(content),
           };
           send({ type: "track", track });
+          await record("ok");
+          await recordSong(user);
         }
       } catch (error) {
-        // Klien sudah pergi; pembatalannya bukan kegagalan yang perlu dicatat.
-        if (abort.signal.aborted) return;
+        // Klien sudah pergi. Jatahnya tidak dikembalikan — model musiknya
+        // mungkin sudah telanjur bekerja — tapi pemakaiannya tetap dicatat.
+        if (abort.signal.aborted) {
+          await record("batal");
+          return;
+        }
         // Hulu yang gagal bukan salah pengguna — jatahnya dikembalikan.
-        void refundComposeQuota(ip);
+        await quota.refund();
+        await record("gagal");
         const message =
           error instanceof UpstreamError
             ? error.message

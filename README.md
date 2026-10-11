@@ -53,10 +53,13 @@ Buka http://localhost:3000.
 
 ### Konfigurasi
 
-Hanya satu yang wajib:
+Yang wajib:
 
 ```
 OPENROUTER_API_KEY=sk-or-...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+AUTH_SECRET=...            # openssl rand -base64 32
 ```
 
 Selebihnya opsional dan sudah ada nilai bawaannya — lihat [.env.example](.env.example)
@@ -73,6 +76,23 @@ sendiri, jadi batasnya bisa lebih longgar dari angka yang tertulis. Isi
 `UPSTASH_REDIS_REST_URL` dan `UPSTASH_REDIS_REST_TOKEN` kalau butuh kuota yang
 persis.
 
+### Masuk, jatah, dan catatan pemakaian
+
+Membuat lagu mensyaratkan masuk dengan Google, dan tiap akun dibatasi
+`USER_DAILY_LIMIT` lagu per hari (bawaan 5, hari dihitung menurut WIB). Lagu
+yang gagal di sisi layanan tidak memotong jatah.
+
+- Di Google Cloud Console, daftarkan `<alamat situs>/api/auth/callback/google`
+  sebagai *Authorized redirect URI* pada OAuth client-nya.
+- Sesi disimpan di cookie bertanda tangan (`AUTH_SECRET`) — tanpa pustaka
+  auth dan tanpa tabel sesi.
+- Tiap pemanggilan model musik dicatat (siapa, kapan, judul, hasilnya), dan
+  tiap akun punya satu catatan pengguna (pertama/terakhir masuk, jumlah lagu).
+  Pengelola yang emailnya ada di `ADMIN_EMAILS` melihatnya di `/admin`.
+- **Isi Upstash di produksi.** Jatah per akun, daftar pengguna, dan catatan
+  pemakaian disimpan di Upstash Redis. Tanpa itu semuanya hanya hidup di
+  memori tiap instance serverless: jatahnya bocor dan catatannya hilang.
+
 ## Peta berkas
 
 ```
@@ -81,6 +101,9 @@ src/
     api/compose/route.ts   Tahap 1 (SSE): status, judul, baris lirik, lalu rencana lagu
     api/render/route.ts    Tahap 2 (SSE): audio dari model musik, berpotongan base64
     api/health/route.ts    Cek konfigurasi tanpa membocorkan kunci
+    api/auth/              Masuk dengan Google: login, callback, logout, me
+    api/log/route.ts       Daftar pengguna + catatan pemakaian (khusus pengelola)
+    admin/page.tsx         Halaman pengelola
     page.tsx layout.tsx    Halaman studio
     error.tsx              Jaring pengaman kalau halaman gagal dirender
   lib/
@@ -88,7 +111,9 @@ src/
     openrouter.ts          Klien OpenRouter + terjemahan pesan kesalahan
     prompt.ts              Instruksi kedua tahap — di sinilah kualitas lagu ditentukan
     plan.ts                Pengurai rencana yang mengalir + lirik berwaktu dari model musik
-    ratelimit.ts           Kuota per IP (memori, atau Upstash kalau diisi)
+    auth.ts                Cookie sesi bertanda tangan
+    ratelimit.ts           Jatah per akun + kuota per IP (memori, atau Upstash kalau diisi)
+    usagelog.ts users.ts   Catatan pemakaian dan daftar pengguna
     client/
       storage.ts           Metadata pustaka di localStorage
       audiodb.ts           Audio per lagu di IndexedDB

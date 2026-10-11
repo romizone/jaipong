@@ -230,6 +230,15 @@ export function isTrack(item: LibraryItem): item is Track {
   return (item as Track).kind === "track";
 }
 
+/** Jawaban /api/auth/me: siapa yang masuk dan jatah lagunya hari ini. */
+export type Account = {
+  /** false kalau server belum diberi kredensial Google. */
+  configured: boolean;
+  user: { name: string; email: string } | null;
+  used: number;
+  limit: number;
+};
+
 /** Permintaan dari formulir di browser. */
 export type ComposeRequest = {
   prompt: string;
