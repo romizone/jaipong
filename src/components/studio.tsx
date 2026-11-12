@@ -14,6 +14,7 @@ import { CreatePanel } from "@/components/create-panel";
 import { LyricsPanel } from "@/components/lyrics-panel";
 import { PlayerBar, modeLabel } from "@/components/player-bar";
 import { SongCard } from "@/components/song-card";
+import { UsageFooter } from "@/components/usage-footer";
 import {
   SongPlayer,
   renderSong,
@@ -746,6 +747,7 @@ export function Studio() {
             </section>
 
             <footer className="pt-2 text-[11px] leading-relaxed text-faint">
+              <UsageFooter aktif={Boolean(account?.pengelola)} />
               <p>
                 Membuat lagu perlu masuk dengan akun Google, paling banyak{" "}
                 {account?.limit ?? 5} lagu sehari. Nama, email, dan judul lagu

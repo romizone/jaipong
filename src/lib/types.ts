@@ -237,6 +237,8 @@ export type Account = {
   user: { name: string; email: string } | null;
   used: number;
   limit: number;
+  /** true kalau yang masuk terdaftar di ADMIN_EMAILS. */
+  pengelola: boolean;
 };
 
 /** Permintaan dari formulir di browser. */

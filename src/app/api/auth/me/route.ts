@@ -1,5 +1,5 @@
 import { readSession } from "@/lib/auth";
-import { LIMITS, hasAuth } from "@/lib/config";
+import { ADMIN_EMAILS, LIMITS, hasAuth } from "@/lib/config";
 import { songsUsedToday } from "@/lib/ratelimit";
 import type { Account } from "@/lib/types";
 
@@ -14,6 +14,7 @@ export async function GET(req: Request) {
     user: user ? { name: user.name, email: user.email } : null,
     used: user ? Math.min(LIMITS.userDaily, await songsUsedToday(user.sub)) : 0,
     limit: LIMITS.userDaily,
+    pengelola: user ? ADMIN_EMAILS.includes(user.email.toLowerCase()) : false,
   };
   return Response.json(account);
 }
