@@ -88,7 +88,8 @@ yang gagal di sisi layanan tidak memotong jatah.
   auth dan tanpa tabel sesi.
 - Tiap pemanggilan model musik dicatat (siapa, kapan, judul, hasilnya), dan
   tiap akun punya satu catatan pengguna (pertama/terakhir masuk, jumlah lagu).
-  Pengelola yang emailnya ada di `ADMIN_EMAILS` melihatnya di `/admin`.
+  Pengelola yang emailnya ada di `ADMIN_EMAILS` melihatnya di `/admin`, dan
+  ringkasan 20 hari terakhir muncul di kaki halaman studio — hanya untuknya.
 - **Isi Upstash di produksi.** Jatah per akun, daftar pengguna, dan catatan
   pemakaian disimpan di Upstash Redis. Tanpa itu semuanya hanya hidup di
   memori tiap instance serverless: jatahnya bocor dan catatannya hilang.
@@ -103,9 +104,12 @@ src/
     api/health/route.ts    Cek konfigurasi tanpa membocorkan kunci
     api/auth/              Masuk dengan Google: login, callback, logout, me
     api/log/route.ts       Daftar pengguna + catatan pemakaian (khusus pengelola)
+    api/stats/route.ts     Ringkasan pemakaian per rentang hari (khusus pengelola)
     admin/page.tsx         Halaman pengelola
     page.tsx layout.tsx    Halaman studio
     error.tsx              Jaring pengaman kalau halaman gagal dirender
+  components/
+    usage-footer.tsx       Tabel ringkasan di kaki studio, hanya untuk pengelola
   lib/
     config.ts              Semua env var, hanya sisi server
     openrouter.ts          Klien OpenRouter + terjemahan pesan kesalahan
@@ -114,6 +118,7 @@ src/
     auth.ts                Cookie sesi bertanda tangan
     ratelimit.ts           Jatah per akun + kuota per IP (memori, atau Upstash kalau diisi)
     usagelog.ts users.ts   Catatan pemakaian dan daftar pengguna
+    usagestats.ts          Meringkas keduanya jadi tabel per rentang hari
     client/
       storage.ts           Metadata pustaka di localStorage
       audiodb.ts           Audio per lagu di IndexedDB
